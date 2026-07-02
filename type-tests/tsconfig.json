@@ -4,6 +4,6 @@
         "noEmit": true,
         "rootDir": ".."
     },
-    "include": ["widget-typing.type-test.tsx", "../src/**/*"],
+    "include": ["*.type-test.tsx", "fixture-app/**/*", "../src/**/*"],
     "exclude": ["../node_modules", "../lib", "../**/*.test.ts"]
 }

@@ -99,11 +99,20 @@ export type WidgetAppSelector<A extends string> = A | { name: A; entry?: WidgetE
  * Props for a DIRECT `<EsmWidgetHost>` mount — the destination API (vs the transition-only
  * {@link DualLoaderProps} that mirrors qiankun). `app` is the app NAME, and the generic defaults to the
  * registered apps so an editor autocompletes the concrete names (`'proof-directory'`, …); passing one
- * narrows `component_path` + `props` to that app's widgets. An unregistered name stays loose.
+ * narrows `widget_name` + `props` to that app's widgets. An unregistered name stays loose.
+ *
+ * `widget_name` is the top-level, strongly-typed selector that DECIDES the `props` type — prefer it.
+ * `props.component_path` is the legacy selector: still accepted so the transition wrappers keep working,
+ * but is deprecated (see the tag on that member) and will be removed once all call sites pass `widget_name`.
  */
 export interface EsmWidgetHostProps<A extends string = RegisteredAppName, P extends WidgetPathFor<A> = WidgetPathFor<A>> {
     app?: WidgetAppSelector<A>
-    props: { component_path: P } & WidgetPropsFor<A, P>
+    /** The widget to mount — narrowed to the app's registered widgets; decides the `props` type. */
+    widget_name?: P
+    props: WidgetPropsFor<A, P> & {
+        /** @deprecated Legacy selector — pass the top-level `widget_name` prop instead. Removed once callers migrate. */
+        component_path?: P
+    }
     placeholder?: string
     className?: string
     disableWrapperStyles?: boolean
@@ -115,6 +124,7 @@ export interface EsmWidgetHostProps<A extends string = RegisteredAppName, P exte
 
 export function EsmWidgetHost<A extends string = RegisteredAppName, P extends WidgetPathFor<A> = WidgetPathFor<A>>({
     app,
+    widget_name,
     props,
     placeholder,
     className,
@@ -124,21 +134,28 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
 }: EsmWidgetHostProps<A, P>): ReactElement {
     const containerRef = useRef<HTMLDivElement>(null)
     // The strong A/P narrowing is a CALL-SITE contract; the transport layer is prop-agnostic, so
-    // internally we carry the widget bag opaquely — mount()/update() just forward it.
-    const runtimeProps = props as { component_path: string } & WidgetProps
-    const instanceRef = useRef<WidgetInstance<typeof runtimeProps> | null>(null)
+    // internally we carry the widget bag opaquely. Strip the legacy `component_path` selector out of the
+    // payload — the widget's own entry injects its path, and the selector now travels as `widget_name`.
+    const { component_path: legacyPath, ...mountProps } = props as WidgetProps & { component_path?: string }
+    const instanceRef = useRef<WidgetInstance<typeof mountProps> | null>(null)
     const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
     const [error, setError] = useState<string>()
 
     // `app` is either the bare name (direct ESM use) or the { name, entry } object (dual-loader forward).
     const appName = typeof app === 'string' ? app : app?.name
-    const componentPath = runtimeProps.component_path
+    // `widget_name` is the preferred selector; `component_path` inside props is the deprecated fallback.
+    const componentPath = widget_name ?? legacyPath
 
     useEffect(() => {
         let cancelled = false
 
         if (!appName) {
             setError('EsmWidgetHost: no app provided')
+            setState('error')
+            return
+        }
+        if (!componentPath) {
+            setError('EsmWidgetHost: no widget_name (or props.component_path) provided')
             setState('error')
             return
         }
@@ -151,14 +168,14 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
             appEntry: typeof app === 'string' ? undefined : typeof app?.entry === 'string' ? app.entry : undefined,
             componentPath,
             container: containerRef.current as HTMLElement,
-            props: runtimeProps,
+            props: mountProps,
         })
             .then((instance) => {
                 if (cancelled || !containerRef.current) {
                     instance.unmount()
                     return
                 }
-                instanceRef.current = instance as WidgetInstance<typeof runtimeProps>
+                instanceRef.current = instance as WidgetInstance<typeof mountProps>
                 setState('ready')
                 onMounted?.()
             })
@@ -180,7 +197,7 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
     // Update-in-place — the equivalent of today's loadedApp.update({ component_path, ...props }).
     useEffect(() => {
         if (state === 'ready') {
-            instanceRef.current?.update(runtimeProps)
+            instanceRef.current?.update(mountProps)
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [props])

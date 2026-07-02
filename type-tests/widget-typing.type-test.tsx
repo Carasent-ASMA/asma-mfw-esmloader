@@ -8,7 +8,9 @@
  *   2. an UNREGISTERED app stays LOOSE — exactly today's permissive behavior;
  *   3. renaming (or removing) a widget turns every stale call site into a compile error for free;
  *   4. `app` is the app NAME (destination API), and the { name, entry } object form still type-checks
- *      (what `createDualLoader` forwards for qiankun parity).
+ *      (what `createDualLoader` forwards for qiankun parity);
+ *   5. the top-level `widget_name` selector narrows `props` the same way (the destination API) with a
+ *      CLEAN payload (no component_path), rejecting wrong name / missing / wrong-typed props; unregistered stays loose.
  *
  * @see _docs/frontend/plans/2026-07-02-15-40-plan-shell-dual-loader-esm-and-qiankun.md — REQ-002
  */
@@ -37,6 +39,14 @@ void (
         app="proof-directory"
         // @ts-expect-error — 'nope' is not a widget of 'proof-directory'
         props={{ component_path: 'nope', userId: '42' }}
+    />
+)
+
+void (
+    <EsmWidgetHost
+        app="proof-directory"
+        widget_name='user-detail'
+        props={{ userId: '42' }}
     />
 )
 
@@ -77,3 +87,44 @@ void (
         props={{ component_path: 'user-detail', userId: '42' }}
     />
 )
+
+// ── 5. The DESTINATION API: top-level `widget_name` selector + CLEAN props (no component_path). ──
+
+// 5a. widget_name + clean props → OK, fully narrowed.
+void (<EsmWidgetHost app="proof-directory" widget_name="user-list" props={{ userId: '42', showArchived: true }} />)
+
+// 5b. Wrong widget_name.
+void (
+    <EsmWidgetHost
+        app="proof-directory"
+        // @ts-expect-error — 'nope' is not a widget of 'proof-directory'
+        widget_name="nope"
+        props={{ userId: '42' }}
+    />
+)
+
+// 5c. Missing required prop (with widget_name).
+void (
+    <EsmWidgetHost
+        app="proof-directory"
+        widget_name="user-list"
+        // @ts-expect-error — widget 'user-list' requires `userId`
+        props={{}}
+    />
+)
+
+// 5d. Wrong prop type (with widget_name).
+void (
+    <EsmWidgetHost
+        app="proof-directory"
+        widget_name="user-detail"
+        // @ts-expect-error — `userId` must be a string
+        props={{ userId: 42 }}
+    />
+)
+
+// 5e. Function-typed widget props narrow too (registry app `test`, widget `two`).
+void (<EsmWidgetHost app="test" widget_name="two" props={{ fn: () => {} }} />)
+
+// 5f. `widget_name` on an UNREGISTERED app → loose: any name, any props, no error.
+void (<EsmWidgetHost app="calendar-not-registered" widget_name="anything" props={{ whatever: 123 }} />)
