@@ -14,21 +14,34 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactElement } fr
 import type { WidgetInstance } from './contract.js'
 import { loadAndMountEsmWidget } from './loadEsmWidget.js'
 
-/** Reference to a target micro-app — matches the shape MfComponentLoader receives from the registry. */
+/**
+ * A micro-app entry — a structural re-declaration of qiankun's `Entry`
+ * (`asma-qiankun`'s `type Entry = string | { scripts?; styles?; html? }`). Re-declared, NOT imported,
+ * so this package keeps ZERO qiankun dependency while staying assignment-compatible with the
+ * `RegistrableApp`/`IMfComponentLoader` types the host passes in.
+ */
+export type WidgetEntry = string | { scripts?: string[]; styles?: string[]; html?: string }
+
+/**
+ * Reference to a target micro-app — structurally identical to the `app` field of `IMfComponentLoader`
+ * (`{ name: string; entry: Entry }`), so `RegistrableApp<{}>` from the registry is assignable to it and
+ * a `MfComponentLoader` fallback is assignable through `createDualLoader`. The ESM host resolves the
+ * widget from `name` + `window.__ASMA_PLATFORM__` (not `entry` — `entry` exists only for the qiankun
+ * fallback and for drop-in type parity).
+ */
 export interface WidgetAppRef {
     name: string
-    /** The app's CDN base; when absent, resolved from `window.__ASMA_PLATFORM__`. */
-    entry?: string
+    entry: WidgetEntry
 }
 
-/** Props shared by both loaders — a superset-compatible mirror of `IMfComponentLoader` so a swap is a rename. */
+/** Props shared by both loaders — a structural mirror of `IMfComponentLoader` so a swap is a rename. */
 export interface DualLoaderProps<T extends object = Record<string, never>> {
     app?: WidgetAppRef
     props: { component_path: string } & T
     placeholder?: string
     className?: string
     disableWrapperStyles?: boolean
-    LoaderComponent?: () => ReactElement | null
+    LoaderComponent?: () => ReactElement
     controller?: AbortController
     onMounted?: () => void
     style?: CSSProperties
@@ -62,7 +75,9 @@ export function EsmWidgetHost<T extends object>({
 
         loadAndMountEsmWidget({
             appName,
-            appEntry: app?.entry,
+            // Only the string form of `entry` is a usable base URL; the qiankun html-entry object form
+            // is irrelevant to the ESM path, which resolves from `name` + window.__ASMA_PLATFORM__.
+            appEntry: typeof app?.entry === 'string' ? app.entry : undefined,
             componentPath,
             container: containerRef.current as HTMLElement,
             props,
