@@ -1,5 +1,5 @@
 {
-    "name": "asma-widget-loader",
+    "name": "asma-mfw-esmloader",
     "version": "0.1.0",
     "description": "Native-ESM widget loader — the transport-agnostic successor to asma-qiankun-react-loader. Loads widgets by import()ing an ES module that exports mount(); createDualLoader dispatches per-app between this and the legacy qiankun loader with no global flag.",
     "type": "module",

@@ -1,4 +1,4 @@
-# asma-widget-loader
+# asma-mfw-esmloader
 
 The transport-agnostic widget loader that supersedes `asma-qiankun-react-loader`. It loads a widget by `import()`ing an ES module that exports `mount()`, and `createDualLoader` dispatches **per app** between this native-ESM path and the legacy qiankun loader **with no global flag**. Zero qiankun dependency — this is the package that survives when qiankun is retired.
 
@@ -9,7 +9,7 @@ See [`_docs/frontend/plans/2026-07-02-15-40-plan-shell-dual-loader-esm-and-qiank
 ```tsx
 // src/components/mf-components/MfComponent.ts
 import { MfComponentLoader } from 'asma-qiankun-react-loader/lib'
-import { createDualLoader } from 'asma-widget-loader'
+import { createDualLoader } from 'asma-mfw-esmloader'
 
 // Same props as MfComponentLoader. Reads window.__ASMA_PLATFORM__.apps[app.name].esm:
 //   marked  → native-ESM <EsmWidgetHost>
@@ -22,7 +22,7 @@ Then in each `Mf*` wrapper, swap `MfComponentLoader` → `MfComponent` (a rename
 ## Usage in a widget (the app's widget build)
 
 ```tsx
-import { defineReactWidget } from 'asma-widget-loader/contract'
+import { defineReactWidget } from 'asma-mfw-esmloader/contract'
 import { MyWidget } from './MyWidget'
 export const { mount } = defineReactWidget(MyWidget)
 ```
@@ -31,8 +31,8 @@ The app's `vite.config.widgets.ts` emits one such entry per `component_path` plu
 
 ## Entry points
 
-- `asma-widget-loader` — `createDualLoader`, `EsmWidgetHost`, `loadAndMountEsmWidget`, the platform-signal + manifest + css helpers (host side).
-- `asma-widget-loader/contract` — `defineReactWidget` + the `WidgetModule`/`WidgetInstance` types (widget side; keeps widget bundles from pulling host code).
+- `asma-mfw-esmloader` — `createDualLoader`, `EsmWidgetHost`, `loadAndMountEsmWidget`, the platform-signal + manifest + css helpers (host side).
+- `asma-mfw-esmloader/contract` — `defineReactWidget` + the `WidgetModule`/`WidgetInstance` types (widget side; keeps widget bundles from pulling host code).
 
 ## Develop
 

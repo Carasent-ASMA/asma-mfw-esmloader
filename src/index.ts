@@ -1,5 +1,5 @@
 /**
- * asma-widget-loader — the transport-agnostic widget loader that supersedes
+ * asma-mfw-esmloader — the transport-agnostic widget loader that supersedes
  * asma-qiankun-react-loader. Loads widgets by `import()`ing an ES module exporting `mount()`;
  * `createDualLoader` dispatches per-app between this and the legacy qiankun loader with no flag.
  *

@@ -12,7 +12,7 @@
  *
  * Usage (in each host app, one file):
  *   import { MfComponentLoader } from 'asma-qiankun-react-loader/lib'
- *   import { createDualLoader } from 'asma-widget-loader'
+ *   import { createDualLoader } from 'asma-mfw-esmloader'
  *   export const MfComponent = createDualLoader(MfComponentLoader)
  *
  * @see _docs/frontend/plans/2026-07-02-15-40-plan-shell-dual-loader-esm-and-qiankun.md — REQ-001/002/003, TASK-004
