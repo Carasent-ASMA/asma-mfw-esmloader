@@ -24,8 +24,8 @@ export type WidgetEntry = string | { scripts?: string[]; styles?: string[]; html
 
 /**
  * The typed-widget registry — the compile-time contract that gives a DIRECT `<EsmWidgetHost>` caller
- * autocomplete on `app.name`, on `component_path` (narrowed to that app's widgets), and on the widget's
- * `props`. It is an OPEN interface each micro-app augments via declaration merging, e.g. from its
+ * autocomplete on `app` (the app name), on `component_path` (narrowed to that app's widgets), and on the
+ * widget's `props`. It is an OPEN interface each micro-app augments via declaration merging, e.g. from its
  * generated `widgets.d.ts`:
  *
  *     declare global {
@@ -69,9 +69,11 @@ export interface WidgetAppRef {
 }
 
 /**
- * Props shared by both loaders — a structural mirror of `IMfComponentLoader` so a swap is a rename.
- * Generic over the app name `A` and widget path `P`: when `A` is a registered app and `P` one of its
- * widgets, `props` is narrowed to that widget's declared props; otherwise it stays loose (today's shape).
+ * Props for the TRANSITION dual loader (`createDualLoader`) and the qiankun fallback — a structural
+ * mirror of `IMfComponentLoader` so a swap is a rename. `app` is the `{ name, entry }` object qiankun
+ * needs (entry = the fetch URL). Generic over the app name `A` and widget path `P`: a registered app +
+ * one of its widgets narrows `props`; otherwise it stays loose (today's shape). For DIRECT ESM mounts
+ * prefer {@link EsmWidgetHostProps}, whose `app` is just the (autocompleted) name.
  */
 export interface DualLoaderProps<A extends string = string, P extends WidgetPathFor<A> = WidgetPathFor<A>> {
     app?: { name: A; entry: WidgetEntry }
@@ -85,7 +87,33 @@ export interface DualLoaderProps<A extends string = string, P extends WidgetPath
     style?: CSSProperties
 }
 
-export function EsmWidgetHost<A extends string, P extends WidgetPathFor<A>>({
+/**
+ * How a DIRECT `<EsmWidgetHost>` caller names the target app: just the app NAME — autocompleted to the
+ * registered apps (the ESM path resolves the app's base from `window.__ASMA_PLATFORM__` by name, so no
+ * `entry` is needed) — OR the `{ name, entry }` object that `createDualLoader` forwards for qiankun
+ * parity (there `entry` is the fetch URL; on the ESM path it is only an optional base-URL override).
+ */
+export type WidgetAppSelector<A extends string> = A | { name: A; entry?: WidgetEntry }
+
+/**
+ * Props for a DIRECT `<EsmWidgetHost>` mount — the destination API (vs the transition-only
+ * {@link DualLoaderProps} that mirrors qiankun). `app` is the app NAME, and the generic defaults to the
+ * registered apps so an editor autocompletes the concrete names (`'proof-directory'`, …); passing one
+ * narrows `component_path` + `props` to that app's widgets. An unregistered name stays loose.
+ */
+export interface EsmWidgetHostProps<A extends string = RegisteredAppName, P extends WidgetPathFor<A> = WidgetPathFor<A>> {
+    app?: WidgetAppSelector<A>
+    props: { component_path: P } & WidgetPropsFor<A, P>
+    placeholder?: string
+    className?: string
+    disableWrapperStyles?: boolean
+    LoaderComponent?: () => ReactElement
+    controller?: AbortController
+    onMounted?: () => void
+    style?: CSSProperties
+}
+
+export function EsmWidgetHost<A extends string = RegisteredAppName, P extends WidgetPathFor<A> = WidgetPathFor<A>>({
     app,
     props,
     placeholder,
@@ -93,7 +121,7 @@ export function EsmWidgetHost<A extends string, P extends WidgetPathFor<A>>({
     LoaderComponent,
     onMounted,
     style,
-}: DualLoaderProps<A, P>): ReactElement {
+}: EsmWidgetHostProps<A, P>): ReactElement {
     const containerRef = useRef<HTMLDivElement>(null)
     // The strong A/P narrowing is a CALL-SITE contract; the transport layer is prop-agnostic, so
     // internally we carry the widget bag opaquely — mount()/update() just forward it.
@@ -102,7 +130,8 @@ export function EsmWidgetHost<A extends string, P extends WidgetPathFor<A>>({
     const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
     const [error, setError] = useState<string>()
 
-    const appName = app?.name
+    // `app` is either the bare name (direct ESM use) or the { name, entry } object (dual-loader forward).
+    const appName = typeof app === 'string' ? app : app?.name
     const componentPath = runtimeProps.component_path
 
     useEffect(() => {
@@ -116,9 +145,10 @@ export function EsmWidgetHost<A extends string, P extends WidgetPathFor<A>>({
 
         loadAndMountEsmWidget({
             appName,
-            // Only the string form of `entry` is a usable base URL; the qiankun html-entry object form
-            // is irrelevant to the ESM path, which resolves from `name` + window.__ASMA_PLATFORM__.
-            appEntry: typeof app?.entry === 'string' ? app.entry : undefined,
+            // A bare-string `app` carries no base URL (the ESM path resolves it from window.__ASMA_PLATFORM__);
+            // only the object form's string `entry` is a usable base override (the qiankun html-entry object
+            // form is irrelevant to the ESM path).
+            appEntry: typeof app === 'string' ? undefined : typeof app?.entry === 'string' ? app.entry : undefined,
             componentPath,
             container: containerRef.current as HTMLElement,
             props: runtimeProps,

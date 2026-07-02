@@ -9,7 +9,14 @@
  * @see _docs/frontend/plans/2026-07-02-15-40-plan-shell-dual-loader-esm-and-qiankun.md
  */
 export { createDualLoader } from './createDualLoader.js'
-export { EsmWidgetHost, type DualLoaderProps, type WidgetAppRef } from './EsmWidgetHost.js'
+export {
+    EsmWidgetHost,
+    type DualLoaderProps,
+    type EsmWidgetHostProps,
+    type WidgetAppRef,
+    type WidgetAppSelector,
+    type WidgetEntry,
+} from './EsmWidgetHost.js'
 export { loadAndMountEsmWidget } from './loadEsmWidget.js'
 export { getAppSignal, getInjectedPlatform, isEsmApp, type InjectedPlatform, type PlatformApp } from './platformSignal.js'
 export {

@@ -6,7 +6,9 @@
  * So a clean `tsc` here proves ALL of:
  *   1. a REGISTERED app narrows component_path + props, and rejects wrong path / missing / wrong-typed props;
  *   2. an UNREGISTERED app stays LOOSE — exactly today's permissive behavior;
- *   3. renaming (or removing) a widget turns every stale call site into a compile error for free.
+ *   3. renaming (or removing) a widget turns every stale call site into a compile error for free;
+ *   4. `app` is the app NAME (destination API), and the { name, entry } object form still type-checks
+ *      (what `createDualLoader` forwards for qiankun parity).
  *
  * @see _docs/frontend/plans/2026-07-02-15-40-plan-shell-dual-loader-esm-and-qiankun.md — REQ-002
  */
@@ -19,23 +21,20 @@ declare global {
             'user-list': { userId: string; showArchived?: boolean }
             'user-detail': { userId: string }
         }
+        test:{
+            one: { a: string }
+            two:{fn:(b: string)=>void}
+        }
     }
 }
 
-const entry = '/cdn/proof-directory/1.0.0/'
-
-// 1a. Registered app + real widget + correct props → OK, fully narrowed.
-void (
-    <EsmWidgetHost
-        app={{ name: 'proof-directory', entry }}
-        props={{ component_path: 'user-list', userId: '42', showArchived: true }}
-    />
-)
+// 1a. Registered app (by NAME) + real widget + correct props → OK, fully narrowed.
+void (<EsmWidgetHost app="proof-directory" props={{ component_path: 'user-list', userId: '42', showArchived: true }} />)
 
 // 1b. Wrong component_path for this app.
 void (
     <EsmWidgetHost
-        app={{ name: 'proof-directory', entry }}
+        app="proof-directory"
         // @ts-expect-error — 'nope' is not a widget of 'proof-directory'
         props={{ component_path: 'nope', userId: '42' }}
     />
@@ -44,7 +43,7 @@ void (
 // 1c. Missing required prop.
 void (
     <EsmWidgetHost
-        app={{ name: 'proof-directory', entry }}
+        app="proof-directory"
         // @ts-expect-error — widget 'user-list' requires `userId`
         props={{ component_path: 'user-list' }}
     />
@@ -53,7 +52,7 @@ void (
 // 1d. Wrong prop type.
 void (
     <EsmWidgetHost
-        app={{ name: 'proof-directory', entry }}
+        app="proof-directory"
         // @ts-expect-error — `userId` must be a string
         props={{ component_path: 'user-list', userId: 42 }}
     />
@@ -62,16 +61,19 @@ void (
 // 3. Rename/removal safety: a stale name (typo of user-detail) is a compile error at the call site.
 void (
     <EsmWidgetHost
-        app={{ name: 'proof-directory', entry }}
+        app="proof-directory"
         // @ts-expect-error — 'user-details' is not a registered widget (renamed/removed → loud error)
         props={{ component_path: 'user-details', userId: '42' }}
     />
 )
 
-// 2. UNREGISTERED app → stays loose (today's behavior): any path, any props, no error.
+// 2. UNREGISTERED app (by name) → stays loose (today's behavior): any path, any props, no error.
+void (<EsmWidgetHost app="calendar-not-registered" props={{ component_path: 'anything-goes', whatever: 123 }} />)
+
+// 4. Object form ({ name, entry }) still narrows too — the shape createDualLoader forwards for qiankun parity.
 void (
     <EsmWidgetHost
-        app={{ name: 'calendar-not-registered', entry }}
-        props={{ component_path: 'anything-goes', whatever: 123, nested: { a: 1 } }}
+        app={{ name: 'proof-directory', entry: '/cdn/proof-directory/1.0.0/' }}
+        props={{ component_path: 'user-detail', userId: '42' }}
     />
 )
