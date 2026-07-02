@@ -16,4 +16,6 @@ jobs:
     with:
       publish_npm: true
       package_name: "asma-mfw-esmloader"
-    secrets: inherit
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      ASMA_AI_API_TOKEN: ${{ secrets.ASMA_AI_API_TOKEN }}
