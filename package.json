@@ -8,6 +8,10 @@
         ".": "./lib/index.js",
         "./contract": "./lib/contract.js"
     },
+     "repository": {
+        "type": "git",
+        "url": "https://github.com/Carasent-ASMA/asma-mfw-esmloader.git"
+    },
     "files": [
         "lib"
     ],
