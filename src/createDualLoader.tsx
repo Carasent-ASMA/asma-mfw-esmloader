@@ -10,7 +10,24 @@
  * The legacy loader is INJECTED (not imported) so this package keeps ZERO qiankun dependency —
  * it is the package that survives when qiankun is retired.
  *
- * Usage (in each host app, one file):
+ * @deprecated Transition-only. The dual loader exists ONLY to run qiankun and native-ESM widgets
+ * side by side while apps migrate — it is scaffolding, not the destination. The endgame is to call
+ * {@link EsmWidgetHost} directly (qiankun retired, no fallback, no `window.__ASMA_PLATFORM__` probe).
+ * Prefer `EsmWidgetHost` for any NEW code, and once an app's widgets are all ESM, replace its
+ * `MfComponent` with `EsmWidgetHost` and delete the wrapper. `EsmWidgetHost` also carries the strong
+ * per-widget typing (see {@link AsmaWidgetRegistry}); the dual loader stays loose for drop-in parity.
+ *
+ * Migration (from a dual-loader call site to the final form):
+ * ```tsx
+ * // transition (this loader) — dispatches per app, loose props:
+ * <MfComponent app={app} props={{ component_path, ...props }} />
+ *
+ * // final — direct, strongly typed once the app augments AsmaWidgetRegistry:
+ * import { EsmWidgetHost } from 'asma-mfw-esmloader'
+ * <EsmWidgetHost app={{ name: 'directory', entry }} props={{ component_path: 'user-list', userId }} />
+ * ```
+ *
+ * Transition usage (in each host app, one file):
  *   import { MfComponentLoader } from 'asma-qiankun-react-loader/lib'
  *   import { createDualLoader } from 'asma-mfw-esmloader'
  *   export const MfComponent = createDualLoader(MfComponentLoader)
@@ -23,11 +40,11 @@ import { EsmWidgetHost, type DualLoaderProps } from './EsmWidgetHost.js'
 import { isEsmApp } from './platformSignal.js'
 
 export function createDualLoader(
-    FallbackLoader: ComponentType<DualLoaderProps<Record<string, unknown>>>,
-): (props: DualLoaderProps<Record<string, unknown>>) => ReactElement {
-    return function MfComponent(props: DualLoaderProps<Record<string, unknown>>): ReactElement {
+    FallbackLoader: ComponentType<DualLoaderProps>,
+): (props: DualLoaderProps) => ReactElement {
+    return function MfComponent(props: DualLoaderProps): ReactElement {
         if (props.app && isEsmApp(props.app.name)) {
-            return <EsmWidgetHost {...props} />
+            return createElement(EsmWidgetHost, props)
         }
         return createElement(FallbackLoader, props)
     }

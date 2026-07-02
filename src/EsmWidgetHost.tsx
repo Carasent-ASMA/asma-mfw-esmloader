@@ -11,7 +11,7 @@
  */
 import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 
-import type { WidgetInstance } from './contract.js'
+import type { WidgetInstance, WidgetProps } from './contract.js'
 import { loadAndMountEsmWidget } from './loadEsmWidget.js'
 
 /**
@@ -23,21 +23,59 @@ import { loadAndMountEsmWidget } from './loadEsmWidget.js'
 export type WidgetEntry = string | { scripts?: string[]; styles?: string[]; html?: string }
 
 /**
+ * The typed-widget registry — the compile-time contract that gives a DIRECT `<EsmWidgetHost>` caller
+ * autocomplete on `app.name`, on `component_path` (narrowed to that app's widgets), and on the widget's
+ * `props`. It is an OPEN interface each micro-app augments via declaration merging, e.g. from its
+ * generated `widgets.d.ts`:
+ *
+ *     declare global {
+ *         interface AsmaWidgetRegistry {
+ *             directory: { 'user-list': import('...').Props; 'user-detail': import('...').Props }
+ *         }
+ *     }
+ *
+ * Empty by default ⇒ `keyof` is `never` ⇒ every app is "unregistered" ⇒ `EsmWidgetHost` degrades to
+ * exactly today's permissive shape (any `component_path`, any props). Registration is opt-in PER APP:
+ * an app that hasn't augmented — or a caller passing a non-literal `app.name` (e.g. a `RegistrableApp`
+ * from the registry, which the 89 host wrappers do) — keeps the loose contract, so nothing existing breaks.
+ *
+ * @see _docs/frontend/plans/2026-07-02-15-40-plan-shell-dual-loader-esm-and-qiankun.md — REQ-002
+ */
+declare global {
+    interface AsmaWidgetRegistry {}
+}
+
+/** Apps that have opted into typed widgets (empty registry ⇒ `never` ⇒ all apps stay loose). */
+type RegisteredAppName = keyof AsmaWidgetRegistry & string
+
+/** `component_path` options for app `A`: its registered widgets, or any string if `A` isn't registered. */
+type WidgetPathFor<A extends string> = A extends RegisteredAppName ? keyof AsmaWidgetRegistry[A] & string : string
+
+/** Extra props for app `A` + path `P`: the widget's declared props, else the loose (any-object) contract. */
+type WidgetPropsFor<A extends string, P extends string> = A extends RegisteredAppName
+    ? P extends keyof AsmaWidgetRegistry[A]
+        ? AsmaWidgetRegistry[A][P]
+        : WidgetProps
+    : WidgetProps
+
+/**
  * Reference to a target micro-app — structurally identical to the `app` field of `IMfComponentLoader`
- * (`{ name: string; entry: Entry }`), so `RegistrableApp<{}>` from the registry is assignable to it and
- * a `MfComponentLoader` fallback is assignable through `createDualLoader`. The ESM host resolves the
- * widget from `name` + `window.__ASMA_PLATFORM__` (not `entry` — `entry` exists only for the qiankun
- * fallback and for drop-in type parity).
+ * (`{ name: string; entry: Entry }`). Kept as the loose (non-generic) alias for existing importers; the
+ * generic narrowing lives in `DualLoaderProps<A, P>` below.
  */
 export interface WidgetAppRef {
     name: string
     entry: WidgetEntry
 }
 
-/** Props shared by both loaders — a structural mirror of `IMfComponentLoader` so a swap is a rename. */
-export interface DualLoaderProps<T extends object = Record<string, never>> {
-    app?: WidgetAppRef
-    props: { component_path: string } & T
+/**
+ * Props shared by both loaders — a structural mirror of `IMfComponentLoader` so a swap is a rename.
+ * Generic over the app name `A` and widget path `P`: when `A` is a registered app and `P` one of its
+ * widgets, `props` is narrowed to that widget's declared props; otherwise it stays loose (today's shape).
+ */
+export interface DualLoaderProps<A extends string = string, P extends WidgetPathFor<A> = WidgetPathFor<A>> {
+    app?: { name: A; entry: WidgetEntry }
+    props: { component_path: P } & WidgetPropsFor<A, P>
     placeholder?: string
     className?: string
     disableWrapperStyles?: boolean
@@ -47,7 +85,7 @@ export interface DualLoaderProps<T extends object = Record<string, never>> {
     style?: CSSProperties
 }
 
-export function EsmWidgetHost<T extends object>({
+export function EsmWidgetHost<A extends string, P extends WidgetPathFor<A>>({
     app,
     props,
     placeholder,
@@ -55,14 +93,17 @@ export function EsmWidgetHost<T extends object>({
     LoaderComponent,
     onMounted,
     style,
-}: DualLoaderProps<T>): ReactElement {
+}: DualLoaderProps<A, P>): ReactElement {
     const containerRef = useRef<HTMLDivElement>(null)
-    const instanceRef = useRef<WidgetInstance<typeof props> | null>(null)
+    // The strong A/P narrowing is a CALL-SITE contract; the transport layer is prop-agnostic, so
+    // internally we carry the widget bag opaquely — mount()/update() just forward it.
+    const runtimeProps = props as { component_path: string } & WidgetProps
+    const instanceRef = useRef<WidgetInstance<typeof runtimeProps> | null>(null)
     const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
     const [error, setError] = useState<string>()
 
     const appName = app?.name
-    const componentPath = props.component_path
+    const componentPath = runtimeProps.component_path
 
     useEffect(() => {
         let cancelled = false
@@ -80,14 +121,14 @@ export function EsmWidgetHost<T extends object>({
             appEntry: typeof app?.entry === 'string' ? app.entry : undefined,
             componentPath,
             container: containerRef.current as HTMLElement,
-            props,
+            props: runtimeProps,
         })
             .then((instance) => {
                 if (cancelled || !containerRef.current) {
                     instance.unmount()
                     return
                 }
-                instanceRef.current = instance as WidgetInstance<typeof props>
+                instanceRef.current = instance as WidgetInstance<typeof runtimeProps>
                 setState('ready')
                 onMounted?.()
             })
@@ -109,7 +150,7 @@ export function EsmWidgetHost<T extends object>({
     // Update-in-place — the equivalent of today's loadedApp.update({ component_path, ...props }).
     useEffect(() => {
         if (state === 'ready') {
-            instanceRef.current?.update(props)
+            instanceRef.current?.update(runtimeProps)
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [props])

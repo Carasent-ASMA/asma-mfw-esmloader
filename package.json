@@ -18,7 +18,8 @@
     "scripts": {
         "build": "tsc",
         "check": "tsc --noEmit",
-        "test": "node --import tsx --test \"src/**/*.test.ts\""
+        "test": "node --import tsx --test \"src/**/*.test.ts\"",
+        "test:types": "tsc -p type-tests/tsconfig.json"
     },
     "peerDependencies": {
         "react": "^18 || ^19",
