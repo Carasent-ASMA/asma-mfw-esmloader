@@ -57,7 +57,26 @@ const { input, plugin } = widgetBuild()
 export default defineConfig({ plugins: [/* app plugins minus qiankun */, plugin], build: { emptyOutDir: false, rollupOptions: { input } } })
 ```
 
-`widgetBuild()` parses `widgets.config.ts` (TypeScript AST — reads the `import()` specifiers), so the same thunk object drives the build and the types with **no second list**. It emits `widgets.json` mapping `component_path → { entry, css[] }` alongside the normal build (both faces in one dist).
+`widgetBuild()` parses `widgets.config.ts` (TypeScript AST — reads the `import()` specifiers), so the same thunk object drives the build and the types with **no second list**. It emits `widgets.json` mapping `component_path → { entry, css[] }` alongside the normal build (both faces in one dist). Pair it with `widgetCodeSplitting()` (`output.codeSplitting`) for reusable per-package vendor chunks — the entry stays the widget's own code, and the isolated `react` chunk is the future import-map substitution target.
+
+## Widget dev mode — source + HMR, zero builds
+
+`widgetDev()` goes in the app's **normal `vite.config.ts`** (serve-only; qiankun dev untouched). `pnpm dev` then also answers `widgets.json`, pointing at dev wrapper modules that install the react-refresh preamble + Vite client before loading the widget **source**:
+
+```ts
+// vite.config.ts (the app's normal one)
+import { widgetDev } from 'asma-mfw-esmloader/vite'
+export default defineConfig({ plugins: [/* … */, widgetDev()] })
+```
+
+In a shell (local or deployed dev — `http://localhost` is exempt from mixed-content blocking), override the app to your dev server **before navigating to the widget's view**:
+
+```js
+window.__ASMA_PLATFORM__ ??= {}; window.__ASMA_PLATFORM__.apps ??= {}
+window.__ASMA_PLATFORM__.apps['asma-app-directory'] = { version: 'dev', base: 'http://localhost:3004/', esm: true }
+```
+
+The dual loader takes the ESM path from your dev server: source modules, live HMR inside the composed page. (Demonstrator-verified pattern — `ignore-esm-architecture` `widgetEntriesDev`.) To exercise the **built** artifact instead: `vite build --config vite.config.widgets.ts --watch` + `vite preview` (with `preview: { cors: true }`) and point `base` at the preview port.
 
 ## Strong widget typing — the full cycle
 
