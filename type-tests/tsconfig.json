@@ -2,8 +2,12 @@
     "extends": "../tsconfig.json",
     "compilerOptions": {
         "noEmit": true,
-        "rootDir": ".."
+        "rootDir": "..",
+        "paths": {
+            "asma-mfw-esmloader": ["../src/index.ts"],
+            "asma-mfw-esmloader/contract": ["../src/contract.ts"]
+        }
     },
-    "include": ["*.type-test.tsx", "fixture-app/**/*", "../src/**/*"],
+    "include": ["*.type-test.tsx", "../src/**/*"],
     "exclude": ["../node_modules", "../lib", "../**/*.test.ts"]
 }

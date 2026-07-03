@@ -31,3 +31,15 @@ export {
 export { ensureStylesheets, type CssDoc } from './cssInsertion.js'
 
 export type { WidgetInstance, WidgetModule, WidgetProps } from './contract.js'
+
+// The typed-widget registry (module-scoped — apps augment via `declare module 'asma-mfw-esmloader'`).
+// `AsmaWidgetRegistry` is declared here at the package root so the augmentation merges; the computed-type
+// helpers (`RegistryFor`/`WidgetPropsOf`) let an app derive its entry from its `widgets` object.
+export type {
+    AsmaWidgetRegistry,
+    RegisteredAppName,
+    RegistryFor,
+    WidgetPathFor,
+    WidgetPropsFor,
+    WidgetPropsOf,
+} from './registry.js'

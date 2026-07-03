@@ -13,6 +13,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactElement } fr
 
 import type { WidgetInstance, WidgetProps } from './contract.js'
 import { loadAndMountEsmWidget } from './loadEsmWidget.js'
+import type { RegisteredAppName, WidgetPathFor, WidgetPropsFor } from './registry.js'
 
 /**
  * A micro-app entry — a structural re-declaration of qiankun's `Entry`
@@ -21,42 +22,6 @@ import { loadAndMountEsmWidget } from './loadEsmWidget.js'
  * `RegistrableApp`/`IMfComponentLoader` types the host passes in.
  */
 export type WidgetEntry = string | { scripts?: string[]; styles?: string[]; html?: string }
-
-/**
- * The typed-widget registry — the compile-time contract that gives a DIRECT `<EsmWidgetHost>` caller
- * autocomplete on `app` (the app name), on `component_path` (narrowed to that app's widgets), and on the
- * widget's `props`. It is an OPEN interface each micro-app augments via declaration merging, e.g. from its
- * generated `widgets.d.ts`:
- *
- *     declare global {
- *         interface AsmaWidgetRegistry {
- *             directory: { 'user-list': import('...').Props; 'user-detail': import('...').Props }
- *         }
- *     }
- *
- * Empty by default ⇒ `keyof` is `never` ⇒ every app is "unregistered" ⇒ `EsmWidgetHost` degrades to
- * exactly today's permissive shape (any `component_path`, any props). Registration is opt-in PER APP:
- * an app that hasn't augmented — or a caller passing a non-literal `app.name` (e.g. a `RegistrableApp`
- * from the registry, which the 89 host wrappers do) — keeps the loose contract, so nothing existing breaks.
- *
- * @see _docs/frontend/plans/2026-07-02-15-40-plan-shell-dual-loader-esm-and-qiankun.md — REQ-002
- */
-declare global {
-    interface AsmaWidgetRegistry {}
-}
-
-/** Apps that have opted into typed widgets (empty registry ⇒ `never` ⇒ all apps stay loose). */
-type RegisteredAppName = keyof AsmaWidgetRegistry & string
-
-/** `component_path` options for app `A`: its registered widgets, or any string if `A` isn't registered. */
-type WidgetPathFor<A extends string> = A extends RegisteredAppName ? keyof AsmaWidgetRegistry[A] & string : string
-
-/** Extra props for app `A` + path `P`: the widget's declared props, else the loose (any-object) contract. */
-type WidgetPropsFor<A extends string, P extends string> = A extends RegisteredAppName
-    ? P extends keyof AsmaWidgetRegistry[A]
-        ? AsmaWidgetRegistry[A][P]
-        : WidgetProps
-    : WidgetProps
 
 /**
  * Reference to a target micro-app — structurally identical to the `app` field of `IMfComponentLoader`
