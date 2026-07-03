@@ -35,6 +35,22 @@ export class ManifestHttpError extends Error {
     }
 }
 
+/**
+ * The widgets.json URL answered 200 but the body is not a widget manifest. The typical culprit is
+ * an old-architecture (qiankun) dev server: Vite's SPA fallback answers ANY unknown path — including
+ * /widgets.json — with 200 + index.html, so status alone cannot prove a manifest exists.
+ */
+export class ManifestFormatError extends Error {
+    constructor(url: string, detail: string) {
+        super(`widgets.json at ${url} is not a widget manifest (${detail}) — an old-architecture (qiankun) dev server answers this path with its index.html fallback`)
+    }
+}
+
+/** True when the parsed body has the manifest shape (a `widgets` map). */
+function isWidgetManifest(parsed: unknown): parsed is WidgetManifest {
+    return typeof parsed === 'object' && parsed !== null && typeof (parsed as { widgets?: unknown }).widgets === 'object' && (parsed as { widgets?: unknown }).widgets !== null
+}
+
 const manifestCache = new Map<string, Promise<WidgetManifest>>()
 
 /** Reset the manifest cache (tests / dev-override reloads). */
@@ -59,11 +75,20 @@ export function fetchManifest(base: string, manifestUrl?: string): Promise<Widge
     const url = manifestUrlFor(base, manifestUrl)
     let cached = manifestCache.get(url)
     if (!cached) {
-        cached = fetch(url).then((res) => {
+        cached = fetch(url).then(async (res) => {
             if (!res.ok) {
                 throw new ManifestHttpError(url, res.status)
             }
-            return res.json() as Promise<WidgetManifest>
+            let parsed: unknown
+            try {
+                parsed = await res.json()
+            } catch {
+                throw new ManifestFormatError(url, 'not JSON')
+            }
+            if (!isWidgetManifest(parsed)) {
+                throw new ManifestFormatError(url, 'no "widgets" map')
+            }
+            return parsed
         })
         manifestCache.set(url, cached)
         // Don't leave a rejected promise stuck in the cache (e.g. a dev override whose server was down):

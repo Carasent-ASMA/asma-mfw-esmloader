@@ -6,7 +6,7 @@
  *
  * @see _docs/frontend/plans/2026-07-02-15-40-plan-shell-dual-loader-esm-and-qiankun.md — REQ-003, TASK-002
  */
-import { fetchManifest, ManifestHttpError } from './widgetsManifest.js'
+import { fetchManifest, ManifestFormatError, ManifestHttpError } from './widgetsManifest.js'
 
 /** One app entry in the injected platform payload. */
 export interface PlatformApp {
@@ -109,11 +109,12 @@ export function peekOverrideTransport(base: string): OverrideTransport | undefin
 
 /**
  * Decide the transport for a dev-override base by probing its `widgets.json` (RISK-005 mitigation).
- * Manifest served ⇒ `esm` (and the fetch is cached, so the ESM path's own resolve reuses it).
- * HTTP error ⇒ `qiankun` — an old-architecture dev server; the qiankun loader re-applies the same
- * override upstream (`qiankun-overrides` merges the key into the app's entry), so BOTH architectures
- * stay dev-overridable with the one widget. Network failure (server not running) ⇒ `esm`, so
- * EsmWidgetHost renders its actionable "start that dev server / clear the override" error.
+ * A VALID manifest served ⇒ `esm` (and the fetch is cached, so the ESM path's own resolve reuses it).
+ * HTTP error, or 200 with a non-manifest body (Vite's SPA fallback answers unknown paths with
+ * 200 + index.html) ⇒ `qiankun` — an old-architecture dev server; the qiankun loader re-applies the
+ * same override upstream (`qiankun-overrides` merges the key into the app's entry), so BOTH
+ * architectures stay dev-overridable with the one widget. Network failure (server not running) ⇒
+ * `esm`, so EsmWidgetHost renders its actionable "start that dev server / clear the override" error.
  *
  * @see _docs/frontend/plans/2026-07-02-15-40-plan-shell-dual-loader-esm-and-qiankun.md:160 — RISK-005
  */
@@ -127,7 +128,7 @@ export async function resolveOverrideTransport(base: string): Promise<OverrideTr
         await fetchManifest(base)
         verdict = 'esm'
     } catch (error) {
-        verdict = error instanceof ManifestHttpError ? 'qiankun' : 'esm'
+        verdict = error instanceof ManifestHttpError || error instanceof ManifestFormatError ? 'qiankun' : 'esm'
     }
     overrideTransportCache.set(base, verdict)
     return verdict

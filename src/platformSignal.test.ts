@@ -111,6 +111,17 @@ describe('resolveOverrideTransport (widgets.json probe at a dev-override base �
         assert.equal(await resolveOverrideTransport(BASE), 'qiankun')
     })
 
+    it('200 + HTML (Vite SPA fallback serves index.html for /widgets.json) ⇒ qiankun', async () => {
+        // fetch's res.json() throws SyntaxError on an HTML body — mirror that.
+        g.fetch = () => Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError(`Unexpected token '<', "<!DOCTYPE "... is not valid JSON`)) } as unknown as Response)
+        assert.equal(await resolveOverrideTransport(BASE), 'qiankun')
+    })
+
+    it('200 + JSON that is not a manifest (no widgets map) ⇒ qiankun', async () => {
+        g.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ hello: 'world' }) } as Response)
+        assert.equal(await resolveOverrideTransport(BASE), 'qiankun')
+    })
+
     it('network failure (dev server not running) ⇒ esm, so the host shows the actionable error', async () => {
         g.fetch = () => Promise.reject(new TypeError('Failed to fetch'))
         assert.equal(await resolveOverrideTransport(BASE), 'esm')

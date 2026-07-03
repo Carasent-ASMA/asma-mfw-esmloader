@@ -32,6 +32,7 @@ export {
     type PlatformApp,
 } from './platformSignal.js'
 export {
+    ManifestFormatError,
     ManifestHttpError,
     clearManifestCache,
     fetchManifest,

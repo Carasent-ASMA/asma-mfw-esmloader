@@ -62,6 +62,17 @@ describe('resolveWidget', () => {
         ;(globalThis as { fetch?: unknown }).fetch = () => Promise.resolve({ ok: false, status: 404 } as Response)
         await assert.rejects(() => resolveWidget(ABS_BASE, '/a'), /widgets\.json not found.*404/)
     })
+
+    it('rejects with ManifestFormatError when the body is HTML (SPA fallback), not JSON', async () => {
+        ;(globalThis as { fetch?: unknown }).fetch = () =>
+            Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError('Unexpected token <')) } as unknown as Response)
+        await assert.rejects(() => resolveWidget(ABS_BASE, '/a'), /not a widget manifest \(not JSON\)/)
+    })
+
+    it('rejects with ManifestFormatError when the JSON has no widgets map', async () => {
+        stubFetch({ some: 'other json' })
+        await assert.rejects(() => resolveWidget(ABS_BASE, '/a'), /not a widget manifest \(no "widgets" map\)/)
+    })
 })
 
 describe('fetchManifest URL', () => {
