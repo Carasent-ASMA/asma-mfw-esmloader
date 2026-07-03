@@ -256,6 +256,8 @@ Deploy the whole `dist/` to the app's CDN base (`<service>/<version>/`). Two thi
 
 To exercise this **without a real platform**, use the import-map-override dev workflow below — it treats an overridden app as `esm: true` at your dev/preview base.
 
+How the payload is produced, what the loader minimally requires (you can bring your own mechanism), and the shell-side dev configs are detailed in [Recommended platform & shell setup](#recommended-platform--shell-setup--the-first-hit-and-what-the-loader-actually-needs).
+
 ---
 
 ## Using it in a host / shell
@@ -306,6 +308,167 @@ To exercise the **built** artifact instead: `vite build --config vite.config.wid
 **Transition semantic:** in a dual-loader shell, an active override routes that app to the ESM path. To dev a NOT-yet-migrated app on the qiankun path via the same widget, add it to the widget's disabled list (`import-map-overrides-disabled`) — the qiankun entry override still applies.
 
 > A full runnable reference of every mode above (shell + three apps + kernel + static server) lives in the [`ignore-esm-architecture`](../../ignore-esm-architecture/README.md) demonstrator (`pnpm start`, `pnpm check:browser`).
+
+---
+
+## Recommended platform & shell setup — the first hit (and what the loader actually needs)
+
+Everything in this section is **our recommended setup, as it runs for us** (browser-verified in the demonstrator, deployed via asma-static-server). The package itself depends on **none of it** — if you host widgets elsewhere, your own mechanism is fully possible as long as you satisfy the small contract below.
+
+### What the loader actually needs (the whole contract)
+
+Per mount, the ESM path resolves the app's base URL from three sources, in this order:
+
+1. **An explicit `entry` on the call** — `<EsmWidgetHost app={{ name: 'my-app', entry: 'https://cdn.example.com/my-app/1.2.3/' }} …>` (or `loadAndMountEsmWidget({ appEntry })`). Works with **no platform payload at all**: the loader fetches `<entry>widgets.json` and imports from there. This is the fully self-managed way.
+2. **A dev override** — localStorage `import-map-override:<app>` (the single-spa schema; see the dev workflow above).
+3. **`window.__ASMA_PLATFORM__.apps[<app>]`** — the injected platform. *Anything* that sets this global **before the first widget mounts** satisfies the contract; the `InjectedPlatform` / `PlatformApp` types are exported so you can type your own injector. An inline script, a fetched `platform.json`, a hardcoded object in a test — all valid.
+
+One caveat: `createDualLoader`'s ESM-vs-qiankun **dispatch** reads only sources 2 and 3 (`isEsmApp`) — an explicit `entry` alone doesn't flip the dual loader. If you skip the platform payload entirely, call `<EsmWidgetHost>` directly with the `entry` form.
+
+### Our first hit — asma-static-server injects the platform
+
+In our setup no client code builds the payload: the static server generates it **per user at first hit** (branch `ASMA-7544`; see [`buildPlatformInjection.ts`](../../auth/asma-static-server/src/handlers/buildPlatformInjection.ts)):
+
+1. **Per-user version resolution** — the user's app versions come from the revman rows (most-specific-wins, null = wildcard), producing `apps[service] = { version, base: '/cdn/<service>/<version>/' }` plus the legacy-parity `default_app_versions` map.
+2. **`esm` marking, derived from the artifact** — for each resolved app@version the server `HEAD`s `s3://…/<service>/<version>/widgets.json` (cached per app@version, 24 h — artifacts are immutable). Present ⇒ `markEsmApps` sets `esm: true` + `widgetsManifest: '<base>widgets.json'`. **No DB field, no global flag, no client probe** — capability travels with the artifact, and multiversion containment is the kill-switch (only users resolved to an ESM-capable version get the ESM path).
+3. **The injection itself** — ONE inline **classic** script, **first in `<head>`**, so it runs synchronously before any module script: it merges `esm-overrides` localStorage base-overrides into the payload, *then* assigns `window.__ASMA_PLATFORM__`, *then* (optionally) materializes a `<script type="importmap">`. Order is load-bearing: an import map cannot change once module resolution has used it, so overrides must win **before** it exists. The JSON is escaped for inline embedding (`</script>` breakout, U+2028/9).
+
+What lands in the page:
+
+```html
+<head>
+    <script>
+        (function () {
+            var p = {
+                default_app_versions: { 'asma-app-directory': '1.2.3' /* … */ },
+                apps: {
+                    'asma-app-directory': {
+                        version: '1.2.3',
+                        base: '/cdn/asma-app-directory/1.2.3/',
+                        esm: true, // ⇐ derived from widgets.json presence in the artifact
+                        widgetsManifest: '/cdn/asma-app-directory/1.2.3/widgets.json',
+                    },
+                    'asma-app-chat': { version: '2.0.1', base: '/cdn/asma-app-chat/2.0.1/' }, // no esm ⇒ qiankun
+                },
+            }
+            /* merge localStorage 'esm-overrides' into p.apps[*].base … */
+            window.__ASMA_PLATFORM__ = p
+        })()
+    </script>
+    <!-- app module scripts come after — the platform is already set -->
+</head>
+```
+
+### Caching model (the optimizations, and why they're safe)
+
+- **`index.html` — `no-store`.** Identity + versions are re-resolved every hit; the page itself is tiny. Everything heavy lives behind it.
+- **`/cdn/<app>/<version>/*` — `public, max-age=31536000, immutable`.** The version is in the path, so artifacts never need invalidation; a new deploy is a new path.
+- **`widgets.json` — fetched once per app@version** and cached in-memory by the loader (`fetchManifest`; the base carries the version, so the cache key is exact). A *rejected* fetch is evicted from the cache, so a dev override pointing at a not-yet-started server recovers on reload.
+- **Entry modules — deduped by the browser module cache.** N concurrent mounts of the same widget cost one fetch and one module instance; no loader-side registry needed.
+- **Vendor chunks — shared per app** via `widgetCodeSplitting()`: a page mounting five directory widgets fetches `mui`, `asma-ui-core`, … once each. The isolated `react` chunk is deliberately the future **import-map substitution target** (CON-002): the endgame serves React once page-wide from a kernel URL and the import map rewires every widget to it — the demonstrator's `kernel/` + import-map `scopes` shows the full pattern working, including dual-versioning for legacy apps.
+
+### Shell dev — proxy the deployed env, replay its first hit
+
+The shell never *fakes* the platform locally — it **replays the deployed one**, so the dual loader reads the exact same signal in dev as in production and the static server stays the single source of truth. Two pieces, both `serve`-only (mirroring [`shell/asma-app-shell`](../../shell/asma-app-shell/vite.config.ts)):
+
+**1. The proxy** — micro-app artifacts and APIs come from the deployed dev environment:
+
+```ts
+// vite.config.proxy.ts (host/shell)
+import { type ProxyOptions } from 'vite'
+
+/** IMPORTANT: key order matters — /api/auth/ must precede /api/ to take precedence. */
+export const proxy: Record<string, string | ProxyOptions> = {
+    // Micro-app artifacts (widgets.json, widgets/*.js, css) from the deployed CDN:
+    '/cdn': 'https://avansas.dev.adopus.no',
+    // Auth endpoints, with Set-Cookie Domain rewritten to the local host so signin works
+    // locally (specific to our cookie domains — adjust or drop for yours). Full version:
+    // shell/asma-app-shell/vite.config.proxy.ts
+    '/api/auth/': {
+        target: 'https://avansas.dev.adopus.no',
+        changeOrigin: true,
+        configure: (proxy) => {
+            proxy.on('proxyRes', (proxyRes, req) => {
+                const refererDomain = new URL(req.headers.referer ?? 'http://localhost').hostname
+                const cookies = proxyRes.headers['set-cookie']
+                if (cookies) {
+                    proxyRes.headers['set-cookie'] = cookies.map((cookie) =>
+                        cookie.replace(/Domain=[^;]+/, `Domain=${refererDomain}`),
+                    )
+                }
+            })
+        },
+    },
+    '/api/': { target: 'https://avansas.dev.adopus.no', changeOrigin: true },
+}
+```
+
+**2. The first-hit replay** — a dev middleware fetches the deployed first-hit HTML for the same URL, lifts the server-rendered `__ASMA_PLATFORM__` inline script out of it, and injects it **first in `<head>`** of the local `index.html` (same position the static server uses):
+
+```ts
+// vite.config.injectMetadata.ts (host/shell) — abridged; full version in
+// shell/asma-app-shell/vite.config.injectMetadata.ts
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
+import type { Plugin, ViteDevServer } from 'vite'
+
+/** Pick the server-rendered inline scripts to replay locally out of the deployed HTML. */
+export function pickInjectedScripts(backendHtml: string): { platform: string } {
+    const platform =
+        (backendHtml.match(/<script(?:\s[^>]*)?>[\s\S]*?<\/script>/g) ?? []).find((s) =>
+            s.includes('__ASMA_PLATFORM__'),
+        ) ?? ''
+    return { platform }
+}
+
+export function injectMetadataPlugin(): Plugin {
+    return {
+        name: 'inject-metadata',
+        apply: 'serve',
+        configureServer(server: ViteDevServer) {
+            server.middlewares.use((req, res, next) => {
+                void (async () => {
+                    const wantsHtml = !req.url?.includes('.') && req.headers.accept?.includes('text/html')
+                    if (!wantsHtml) return next()
+
+                    // Fetch the DEPLOYED first-hit page for this URL and lift its platform script:
+                    const backendHtml = await (await fetch(`https://avansas.dev.adopus.no${req.url}`)).text()
+                    const { platform } = pickInjectedScripts(backendHtml)
+
+                    const indexHtml = await readFile(path.resolve(process.cwd(), 'index.html'), 'utf-8')
+                    const viteHtml = await server.transformIndexHtml(req.url ?? '/', indexHtml)
+
+                    // Platform FIRST in <head> — set before any module script runs.
+                    res.setHeader('Content-Type', 'text/html')
+                    res.end(viteHtml.replace('<head>', `<head>${platform}`))
+                })().catch(next)
+            })
+        },
+    }
+}
+```
+
+**3. Wire both** into the shell's normal config:
+
+```ts
+// vite.config.ts (host/shell)
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
+
+import { injectMetadataPlugin } from './vite.config.injectMetadata'
+import { proxy } from './vite.config.proxy'
+
+export default defineConfig({
+    plugins: [injectMetadataPlugin(), react()],
+    resolve: { dedupe: ['react', 'react-dom'] },
+    server: {
+        port: 3000,
+        proxy,
+    },
+})
+```
+
+Result: `pnpm dev` on the shell gives you shell source with HMR, real micro-apps from the deployed CDN, the real per-user platform signal — and any single app re-pointed to *its* dev server via the import-map-overrides widget (dev workflow above). If you'd rather not scrape HTML, the demonstrator shows the simpler alternative: the server exposes the same payload as `/platform.json`, and a dev boot script fetches it, applies overrides, sets `window.__ASMA_PLATFORM__`, then imports the shell — same contract, different transport.
 
 ---
 
