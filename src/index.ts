@@ -18,7 +18,7 @@ export {
     type WidgetEntry,
 } from './EsmWidgetHost.js'
 export { loadAndMountEsmWidget } from './loadEsmWidget.js'
-export { getAppSignal, getInjectedPlatform, isEsmApp, type InjectedPlatform, type PlatformApp } from './platformSignal.js'
+export { IMPORT_MAP_OVERRIDE_PREFIX, IMPORT_MAP_OVERRIDES_DISABLED_KEY, getAppSignal, getInjectedPlatform, isEsmApp, type InjectedPlatform, type PlatformApp } from './platformSignal.js'
 export {
     clearManifestCache,
     fetchManifest,

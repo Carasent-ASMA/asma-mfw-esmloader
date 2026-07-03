@@ -69,14 +69,18 @@ import { widgetDev } from 'asma-mfw-esmloader/vite'
 export default defineConfig({ plugins: [/* … */, widgetDev()] })
 ```
 
-In a shell (local or deployed dev — `http://localhost` is exempt from mixed-content blocking), override the app to your dev server **before navigating to the widget's view**:
+In a shell (local or deployed dev — `http://localhost` is exempt from mixed-content blocking), use the **same `import-map-overrides` widget you already have** (single-spa schema) — no separate mechanism. Point the app at your dev server and reload:
 
 ```js
-window.__ASMA_PLATFORM__ ??= {}; window.__ASMA_PLATFORM__.apps ??= {}
-window.__ASMA_PLATFORM__.apps['asma-app-directory'] = { version: 'dev', base: 'http://localhost:3004/', esm: true }
+// exactly what the overrides widget writes; survives reloads:
+localStorage.setItem('import-map-override:asma-app-directory', 'http://localhost:3003/')
+// back to normal (or toggle it off in the widget / add to import-map-overrides-disabled):
+localStorage.removeItem('import-map-override:asma-app-directory')
 ```
 
-The dual loader takes the ESM path from your dev server: source modules, live HMR inside the composed page. (Demonstrator-verified pattern — `ignore-esm-architecture` `widgetEntriesDev`.) To exercise the **built** artifact instead: `vite build --config vite.config.widgets.ts --watch` + `vite preview` (with `preview: { cors: true }`) and point `base` at the preview port.
+An app with an active override is treated as `esm: true` with `widgets.json` at that base — the dual loader takes the ESM path from your dev server: source modules, live HMR inside the composed page. (Demonstrator-verified pattern — `ignore-esm-architecture` `widgetEntriesDev`.) To exercise the **built** artifact instead: `vite build --config vite.config.widgets.ts --watch` + `vite preview` (with `preview: { cors: true }`) and point the override at the preview port.
+
+**Transition semantic:** in a dual-loader shell, an active override routes that app to the ESM path. To dev a NOT-yet-migrated app on the qiankun path via the same widget, add it to the widget's disabled list (`import-map-overrides-disabled`) — the qiankun entry override still applies.
 
 ## Strong widget typing — the full cycle
 
