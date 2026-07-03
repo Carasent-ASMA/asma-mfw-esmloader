@@ -163,6 +163,108 @@ export interface WidgetCodeSplittingOptions {
     minPackageSize?: number
 }
 
+const DEV_SCHEME = 'virtual:asma-widget-dev/'
+
+interface ResolvedConfigLike {
+    root: string
+    base: string
+}
+
+interface DevResponseLike {
+    setHeader: (name: string, value: string) => void
+    end: (body: string) => void
+}
+
+interface DevServerLike {
+    middlewares: {
+        use: (fn: (req: { url?: string }, res: DevResponseLike, next: () => void) => void) => void
+    }
+}
+
+/**
+ * The dev wrapper module served for one widget: installs the react-refresh preamble + Vite client
+ * BEFORE the widget module executes (mirrors asma-qiankun-plugin-vite's dev entry), then re-exports
+ * `mount` from the real SOURCE module — full HMR, zero builds. Pure + unit-testable.
+ */
+export function devWrapperSource(base: string, targetUrl: string): string {
+    return [
+        `import ${JSON.stringify(`${base}@vite/client`)}`,
+        `import RefreshRuntime from ${JSON.stringify(`${base}@react-refresh`)}`,
+        `if (!window.__vite_plugin_react_preamble_installed__) {`,
+        `    RefreshRuntime.injectIntoGlobalHook(window)`,
+        `    window.$RefreshReg$ = () => {}`,
+        `    window.$RefreshSig$ = () => (type) => type`,
+        `    window.__vite_plugin_react_preamble_installed__ = true`,
+        `}`,
+        `const widgetModule = await import(${JSON.stringify(targetUrl)})`,
+        `export const mount = widgetModule.mount`,
+    ].join('\n')
+}
+
+/**
+ * DEV: register in the app's NORMAL `vite.config.ts` (serve-only; the qiankun dev flow is untouched).
+ * Makes `pnpm dev` also answer `widgets.json`, whose entries point at dev wrapper modules
+ * (`/@id/virtual:asma-widget-dev/<name>`) that load the widget's SOURCE with HMR — so a shell
+ * (local or deployed) overriding `window.__ASMA_PLATFORM__.apps[<app>]` to
+ * `{ base: 'http://localhost:<port>/', esm: true }` composes the live dev widget. Same
+ * `widgets.config.ts` single source of truth as `widgetBuild()`. Demonstrator-verified pattern
+ * (`ignore-esm-architecture` `widgetEntriesDev`, browser-checked incl. HMR).
+ */
+export function widgetDev(options: WidgetBuildOptions = {}): {
+    name: string
+    apply: 'serve'
+    configResolved: (config: ResolvedConfigLike) => void
+    configureServer: (server: DevServerLike) => void
+    resolveId: (id: string) => string | null
+    load: (id: string) => string | null
+} {
+    const configRel = options.config ?? 'src/widgets.config.ts'
+    let root = process.cwd()
+    let base = '/'
+    let specifiers: WidgetEntrySpecifiers = {}
+    let nameToKey: Record<string, string> = {}
+
+    /** widget name → root-relative source URL of its entry (what the dev wrapper imports). */
+    const entryUrlFor = (widgetName: string): string => {
+        const configAbs = path.resolve(root, configRel)
+        const abs = resolveEntryFile(path.resolve(path.dirname(configAbs), specifiers[widgetName] ?? ''))
+        return base + path.relative(root, abs).split(path.sep).join('/')
+    }
+
+    return {
+        name: 'asma-widget-dev',
+        apply: 'serve',
+        configResolved(config: ResolvedConfigLike): void {
+            root = config.root
+            base = config.base
+            specifiers = readWidgetEntries(readFileSync(path.resolve(root, configRel), 'utf8'), options.exportName)
+            nameToKey = Object.fromEntries(Object.keys(specifiers).map((name) => [sanitizeEntryName(name), name]))
+        },
+        configureServer(server: DevServerLike): void {
+            server.middlewares.use((req, res, next) => {
+                const url = (req.url ?? '').split('?')[0]
+                if (url !== `${base}widgets.json` && url !== '/widgets.json') return next()
+                res.setHeader('content-type', 'application/json')
+                res.setHeader('access-control-allow-origin', '*')
+                // Base-absolute /@id/ URLs so the loader's `new URL(entry, overrideBase)` hits this server.
+                const widgets = Object.fromEntries(
+                    Object.keys(specifiers).map((name) => [name, `${base}@id/${DEV_SCHEME}${sanitizeEntryName(name)}`]),
+                )
+                res.end(`${JSON.stringify({ widgets }, null, 2)}\n`)
+            })
+        },
+        // Keep dev ids \0-free so their /@id/ URLs stay plain and importable (demonstrator note).
+        resolveId(id: string): string | null {
+            return id.startsWith(DEV_SCHEME) ? id : null
+        },
+        load(id: string): string | null {
+            if (!id.startsWith(DEV_SCHEME)) return null
+            const widgetName = nameToKey[id.slice(DEV_SCHEME.length)]
+            return widgetName ? devWrapperSource(base, entryUrlFor(widgetName)) : null
+        },
+    }
+}
+
 /**
  * Recommended `output.codeSplitting` for widget builds — REUSABLE vendor chunks instead of one fat entry:
  *   1. `react` — react/react-dom/scheduler as ONE chunk: the import-map substitution target when the

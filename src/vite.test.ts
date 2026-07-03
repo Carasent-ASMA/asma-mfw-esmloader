@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { test } from 'node:test'
 
 import {
     collectEntryCss,
+    devWrapperSource,
     packageNameOf,
     readWidgetEntries,
     sanitizeEntryName,
     widgetCodeSplitting,
+    widgetDev,
     type OutputChunk,
 } from './vite.js'
 
@@ -101,4 +106,58 @@ test('widgetCodeSplitting groups: react kernel wins over per-package; tail falls
     assert.equal(nameOf('/repo/src/App.tsx'), null)
     assert.equal(vendor!.name, 'vendor')
     assert.equal(widgetCodeSplitting({ minPackageSize: 1 }).groups[1]!.minSize, 1)
+})
+
+test('devWrapperSource installs the react-refresh preamble before importing the widget source', () => {
+    const source = devWrapperSource('/', '/src/widgets/MyWidget.tsx')
+    const preambleAt = source.indexOf('__vite_plugin_react_preamble_installed__')
+    const importAt = source.indexOf(`await import("/src/widgets/MyWidget.tsx")`)
+    assert.ok(preambleAt > -1 && importAt > -1 && preambleAt < importAt, 'preamble must run before the widget import')
+    assert.match(source, /import "\/@vite\/client"/)
+    assert.match(source, /export const mount = widgetModule\.mount/)
+})
+
+/** Scaffold a fake app root with a widgets.config.ts + entry file; return a configured widgetDev plugin. */
+function devPluginInFakeApp() {
+    const root = mkdtempSync(path.join(tmpdir(), 'asma-widget-dev-'))
+    mkdirSync(path.join(root, 'src/widgets'), { recursive: true })
+    writeFileSync(
+        path.join(root, 'src/widgets.config.ts'),
+        `export const widgets = { '/my-widget': () => import('./widgets/MyWidget') }\n`,
+    )
+    writeFileSync(path.join(root, 'src/widgets/MyWidget.tsx'), `export const mount = () => {}\n`)
+    const plugin = widgetDev()
+    plugin.configResolved({ root, base: '/' })
+    return plugin
+}
+
+test('widgetDev serves widgets.json mapping original names to /@id/ dev wrapper URLs', () => {
+    const plugin = devPluginInFakeApp()
+    let handler: ((req: { url?: string }, res: never, next: () => void) => void) | undefined
+    plugin.configureServer({ middlewares: { use: (fn) => (handler = fn) } })
+    assert.ok(handler)
+
+    const headers: Record<string, string> = {}
+    let body = ''
+    const res = { setHeader: (k: string, v: string) => (headers[k] = v), end: (b: string) => (body = b) }
+    handler({ url: '/widgets.json?t=1' }, res as never, () => assert.fail('must not fall through'))
+
+    assert.equal(headers['access-control-allow-origin'], '*')
+    assert.deepEqual(JSON.parse(body), {
+        widgets: { '/my-widget': '/@id/virtual:asma-widget-dev/my-widget' },
+    })
+
+    let fell = false
+    handler({ url: '/anything-else' }, res as never, () => (fell = true))
+    assert.ok(fell, 'non-manifest URLs fall through to the next middleware')
+})
+
+test('widgetDev load() returns a wrapper importing the widget SOURCE file for known names only', () => {
+    const plugin = devPluginInFakeApp()
+    assert.equal(plugin.resolveId('virtual:asma-widget-dev/my-widget'), 'virtual:asma-widget-dev/my-widget')
+    assert.equal(plugin.resolveId('./anything'), null)
+    const source = plugin.load('virtual:asma-widget-dev/my-widget')
+    assert.ok(source)
+    assert.match(source, /await import\("\/src\/widgets\/MyWidget\.tsx"\)/)
+    assert.equal(plugin.load('virtual:asma-widget-dev/unknown'), null)
 })
