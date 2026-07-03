@@ -21,103 +21,80 @@ Then in each `Mf*` wrapper, swap `MfComponentLoader` → `MfComponent` (a rename
 
 ## Usage in a widget (the app's widget build)
 
-```tsx
-import { defineReactWidget } from 'asma-mfw-esmloader/contract'
-import { MyWidget } from './MyWidget'
-export const { mount } = defineReactWidget(MyWidget)
+One `widgets.config.ts` per app is the **single source of truth** for both the build and the types — `name → () => import('./entry')` thunks:
+
+```ts
+// src/widgets.config.ts
+export const widgets = {
+    '/my-recipients-widget': () => import('./widgets/MyRecipientsWidget'),
+}
 ```
 
-The app's `vite.config.widgets.ts` emits one such entry per `component_path` plus a `widgets.json` mapping `component_path → { entry, css[] }`.
+The entry exports `mount` and exposes its `Props`:
+
+```tsx
+// src/widgets/MyRecipientsWidget.tsx
+import { defineReactWidget } from 'asma-mfw-esmloader/contract'
+export type Props = { amount_of_rows?: number }
+export const { mount } = defineReactWidget<Props>(MyRecipients)
+```
+
+The build turns that one object into per-widget ES entries + `widgets.json`:
+
+```ts
+// vite.config.widgets.ts
+import { widgetBuild } from 'asma-mfw-esmloader/vite'
+const { input, plugin } = widgetBuild()
+export default defineConfig({ plugins: [/* app plugins minus qiankun */, plugin], build: { emptyOutDir: false, rollupOptions: { input } } })
+```
+
+`widgetBuild()` parses `widgets.config.ts` (TypeScript AST — reads the `import()` specifiers), so the same thunk object drives the build and the types with **no second list**. It emits `widgets.json` mapping `component_path → { entry, css[] }` alongside the normal build (both faces in one dist).
 
 ## Strong widget typing — the full cycle
 
-Opt-in **per app**. Once an app registers its widgets, a **direct** `<EsmWidgetHost>` call gets autocomplete on the app name, on the widget selector (narrowed to that app's widgets), and `props` typed to the selected widget — with wrong/missing/mistyped props rejected at compile time. An app that hasn't registered — and every call routed through `createDualLoader` (the 89 transition wrappers) — stays exactly as loose as today. **The widget component's `Props` is the single source of truth: the generated types _reference_ it, never copy it, so they can't drift.**
+Opt-in **per app**, **no codegen**. Once an app registers its widgets, a **direct** `<EsmWidgetHost>` call gets autocomplete on the app name, on the widget selector (narrowed to that app's widgets), and `props` typed to the selected widget — wrong/missing/mistyped props rejected at compile time. An app that hasn't registered — and every call routed through `createDualLoader` (the transition wrappers) — stays exactly as loose as today. **The widget component's `Props` is the single source of truth: types are _computed_ from it, never copied or generated, so they can't drift.**
 
-### The contract
+### The contract — module-scoped, not global
 
-`AsmaWidgetRegistry` is an **open** interface (`app → widget → Props`) that each app augments via declaration merging. Empty by default ⇒ `keyof` is `never` ⇒ everything is loose. This is the only thing the loader owns; apps fill it in.
+`AsmaWidgetRegistry` is an **open** interface (`app → widget → Props`) exported by the package; each app augments it with **`declare module 'asma-mfw-esmloader'`** — the standard registry pattern (react-query `Register`, Redux, Vue), so there is zero global-namespace pollution. Empty by default ⇒ `keyof` is `never` ⇒ everything stays loose.
+
+### Register an app — 3 lines, computed from `widgets` (no generated file)
 
 ```ts
-declare global {
-    interface AsmaWidgetRegistry {
-        directory: {
-            'user-list': import('.../UserListWidget').Props
-            'user-detail': import('.../UserDetailWidget').Props
-        }
-    }
+// src/widgets.contract.ts
+import type { RegistryFor } from 'asma-mfw-esmloader'
+import type { widgets } from './widgets.config'
+declare module 'asma-mfw-esmloader' {
+    interface AsmaWidgetRegistry { 'asma-app-directory': RegistryFor<typeof widgets> }
 }
 ```
 
-### Authoring a new widget → getting its types (the cycle)
+`RegistryFor<typeof widgets>` derives `{ widgetName: Props }` by extracting each thunk's `Props` (`() => import('./entry')` → the entry's `mount(container, props)`). **Adding a widget = one line in `widgets.config.ts`** — the build entry, the `widgets.json` key, and the type all follow automatically.
 
-**1. Write the component with an exported `Props` type** — this is the single source of truth:
-
-```tsx
-// src/widgets/UserListWidget.tsx
-export type Props = { userId: string; showArchived?: boolean }
-export const { mount } = defineReactWidget<Props>(UserList)
-```
-
-**2. Register it in the app's `widgets.config`** — the same map `vite.config.widgets.ts` already consumes (no second source of truth). Keys are the `widget_name` (= the `widgets.json` key); values are the entry module, **relative to the generated `.d.ts`**:
-
-```ts
-export const widgets = { 'user-list': './widgets/UserListWidget', /* … */ }
-```
-
-**3. Generate the augmentation** — a tiny script in the widget build calls the codegen:
-
-```ts
-// scripts/gen-widget-types.ts
-import { writeFileSync } from 'node:fs'
-import { renderWidgetTypes } from 'asma-mfw-esmloader/gen'
-import { widgets } from '../src/widgets.config'
-writeFileSync('src/widgets.generated.d.ts', renderWidgetTypes({ app: 'directory', widgets }))
-```
-
-which emits — **references, not copies**:
-
-```ts
-// AUTO-GENERATED by asma-mfw-esmloader (renderWidgetTypes). Do not edit — regenerate.
-import type { Props as W0 } from './widgets/UserDetailWidget'
-import type { Props as W1 } from './widgets/UserListWidget'
-declare global {
-    interface AsmaWidgetRegistry {
-        "directory": {
-            "user-detail": W0
-            "user-list": W1
-        }
-    }
-}
-export {}
-```
-
-**4. The host picks it up** via a **type-only dependency** on the app (in a pnpm workspace that's already a symlink, so TS resolves the generated file's relative `import type`s correctly), or via one aggregate `asma-widget-types` package that re-exports each app's augmentation. **Not** by symlinking the generated file into this loader — that would invert the dependency and break on publish.
-
-**5. Use it, fully typed:**
+### Use it, fully typed
 
 ```tsx
-<EsmWidgetHost app="directory" widget_name="user-list" props={{ userId }} />
+<EsmWidgetHost app="asma-app-directory" widget_name="/my-recipients-widget" props={{ amount_of_rows: 5 }} />
 ```
-
-### Selecting the widget
 
 - **`widget_name`** (top-level, preferred) — the selector; it decides the `props` type.
-- **`props.component_path`** (`@deprecated`) — the legacy selector, still accepted so the transition wrappers keep working; removed once all direct callers pass `widget_name`. `createDualLoader`/qiankun stay on `component_path`.
+- **`props.component_path`** (`@deprecated`) — the legacy selector, still accepted so the transition wrappers keep working; `createDualLoader`/qiankun stay on it.
+
+### How the host sees an app's types
+
+The augmentation merges only within one TS **program**, so a host adds a **type-only (workspace) dependency** on the apps it renders — or an aggregate `asma-widget-types` package that re-exports each app's `widgets.contract`. (A monorepo alone does **not** auto-merge across per-package tsconfigs.)
 
 ### What you get for free (rename / removal safety)
 
-- Rename or delete a widget **file**, or drop its `Props` export → the generated `import type` fails to resolve → **loud error at the app's `tsc`** (regenerate / fix the export).
+- Rename/delete a widget **file**, or drop its `Props` export → the `widgets.config` `import()` and the computed type break → **loud error at the app's `tsc`**.
 - Rename a widget **name** → the key vanishes from the registry → **every stale `<EsmWidgetHost widget_name="old">` is a compile error** at the exact call site.
-- Types are referenced, never copied, so the registry can't silently drift from the component (the package's `renderWidgetTypes` golden test also asserts generator output == the committed fixture).
-
-### The generator — `asma-mfw-esmloader/gen`
-
-`renderWidgetTypes({ app, widgets, propsExport? })` → the `.d.ts` source (pure; the caller writes it). `widgets` maps each widget name to its entry module specifier — relative to the generated file, each exporting a `Props` type; `propsExport` defaults to `'Props'`. Output is deterministic (widgets sorted) for a stable regeneration diff.
+- Types are computed by reference, never copied/generated, so the registry cannot silently drift from the component.
 
 ## Entry points
 
-- `asma-mfw-esmloader` — `createDualLoader`, `EsmWidgetHost`, `loadAndMountEsmWidget`, the platform-signal + manifest + css helpers (host side).
+- `asma-mfw-esmloader` — `createDualLoader`, `EsmWidgetHost`, `loadAndMountEsmWidget`, the `AsmaWidgetRegistry` contract + `RegistryFor`/`WidgetPropsOf` helpers, and the platform-signal / manifest / css helpers (host side).
 - `asma-mfw-esmloader/contract` — `defineReactWidget` + the `WidgetModule`/`WidgetInstance` types (widget side; keeps widget bundles from pulling host code).
+- `asma-mfw-esmloader/vite` — `widgetBuild()` for the app's `vite.config.widgets.ts` (build-time only; needs `typescript` present, which app builds have).
 
 ## Develop
 
