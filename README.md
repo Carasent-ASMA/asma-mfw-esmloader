@@ -30,13 +30,22 @@ export const widgets = {
 }
 ```
 
-The entry exports `mount` and exposes its `Props`:
+The entry exports `mount`. **Props are declared once — in the component's own signature.** `defineReactWidget` *infers* them from the component you pass (no `<Props>` type argument, no separate `type Props`):
 
 ```tsx
 // src/widgets/MyRecipientsWidget.tsx
 import { defineReactWidget } from 'asma-mfw-esmloader/contract'
-export type Props = { amount_of_rows?: number }
-export const { mount } = defineReactWidget<Props>(MyRecipients)
+// MyRecipients: (props: { amount_of_rows?: number }) => JSX — props typed here, once.
+export const { mount } = defineReactWidget(MyRecipients)
+```
+
+If the widget wraps its leaf in app providers, *reference* the leaf's props (don't restate them) with `ComponentProps` — still one source of truth:
+
+```tsx
+import type { ComponentProps } from 'react'
+export const { mount } = defineReactWidget((props: ComponentProps<typeof MyRecipients>) => (
+    <AppProviders><MyRecipients {...props} /></AppProviders>
+))
 ```
 
 The build turns that one object into per-widget ES entries + `widgets.json`:
@@ -52,7 +61,7 @@ export default defineConfig({ plugins: [/* app plugins minus qiankun */, plugin]
 
 ## Strong widget typing — the full cycle
 
-Opt-in **per app**, **no codegen**. Once an app registers its widgets, a **direct** `<EsmWidgetHost>` call gets autocomplete on the app name, on the widget selector (narrowed to that app's widgets), and `props` typed to the selected widget — wrong/missing/mistyped props rejected at compile time. An app that hasn't registered — and every call routed through `createDualLoader` (the transition wrappers) — stays exactly as loose as today. **The widget component's `Props` is the single source of truth: types are _computed_ from it, never copied or generated, so they can't drift.**
+Opt-in **per app**, **no codegen**. Once an app registers its widgets, a **direct** `<EsmWidgetHost>` call gets autocomplete on the app name, on the widget selector (narrowed to that app's widgets), and `props` typed to the selected widget — wrong/missing/mistyped props rejected at compile time. An app that hasn't registered — and every call routed through `createDualLoader` (the transition wrappers) — stays exactly as loose as today. **The widget component's `Props` is the single source of truth: types are *computed* from it, never copied or generated, so they can't drift.**
 
 ### The contract — module-scoped, not global
 
