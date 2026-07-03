@@ -110,12 +110,87 @@ export function sanitizeEntryName(widgetName: string): string {
 }
 
 /** A Rollup output chunk (minimal structural view — avoids a hard `vite`/`rollup` type dependency). */
-interface OutputChunk {
+export interface OutputChunk {
     type: string
     isEntry?: boolean
     name?: string
     fileName: string
+    /** fileNames of statically imported sibling chunks — the edges of the chunk graph. */
+    imports?: string[]
     viteMetadata?: { importedCss?: Set<string> }
+}
+
+/**
+ * All CSS a widget entry needs = the union of `importedCss` across the entry's whole STATIC import
+ * graph, not just the entry chunk itself — with `codeSplitting` (per-package vendor chunks) a vendor's
+ * CSS is attached to the vendor chunk. Post-order DFS so dependency CSS precedes the entry's own
+ * (base styles first, widget overrides last in the cascade).
+ */
+export function collectEntryCss(entry: OutputChunk, bundle: Record<string, OutputChunk>): string[] {
+    const css = new Set<string>()
+    const seen = new Set<string>()
+    const walk = (chunk: OutputChunk): void => {
+        if (seen.has(chunk.fileName)) return
+        seen.add(chunk.fileName)
+        for (const imported of chunk.imports ?? []) {
+            const next = bundle[imported]
+            if (next) walk(next)
+        }
+        for (const file of chunk.viteMetadata?.importedCss ?? []) css.add(file)
+    }
+    walk(entry)
+    return [...css]
+}
+
+const PKG_NAME_RE = /node_modules[\\/](?:\.pnpm[\\/][^\\/]+[\\/]node_modules[\\/])?((?:@[^\\/]+[\\/])?[^\\/]+)/
+
+/** Extract the npm package name from a module id (pnpm `.pnpm/…/node_modules/<pkg>` paths included). */
+export function packageNameOf(id: string): string | undefined {
+    const match = PKG_NAME_RE.exec(id)
+    return match?.[1]?.replace(/\\/g, '/')
+}
+
+/** One `codeSplitting` group (structural subset of rolldown's `CodeSplittingGroup` — no rolldown type dep). */
+export interface WidgetChunkGroup {
+    name: string | ((id: string) => string | null)
+    test?: RegExp
+    priority?: number
+    minSize?: number
+}
+
+export interface WidgetCodeSplittingOptions {
+    /** Packages whose accumulated size is below this stay merged in the `vendor` chunk. Default 20 KiB. */
+    minPackageSize?: number
+}
+
+/**
+ * Recommended `output.codeSplitting` for widget builds — REUSABLE vendor chunks instead of one fat entry:
+ *   1. `react` — react/react-dom/scheduler as ONE chunk: the import-map substitution target when the
+ *      shared-kernel endgame lands (CON-002), and the chunk every widget of the app shares today.
+ *   2. per-package — each big dependency (`mui-material`, `tailwind-merge`, …) is its own chunk, so a
+ *      page loading N widgets of the app fetches each library once, and a widget that doesn't use a
+ *      library doesn't fetch it.
+ *   3. `vendor` — the small-package tail, one shared chunk.
+ * App source stays under automatic chunking (entry = the widget's own code; code shared between widget
+ * entries auto-splits). Pass to `build.rollupOptions.output.codeSplitting`.
+ */
+export function widgetCodeSplitting(options: WidgetCodeSplittingOptions = {}): { groups: WidgetChunkGroup[] } {
+    const minPackageSize = options.minPackageSize ?? 20 * 1024
+    return {
+        groups: [
+            { name: 'react', test: /node_modules[\\/](?:react|react-dom|scheduler)[\\/]/, priority: 3 },
+            {
+                name: (id: string) => {
+                    const pkg = packageNameOf(id)
+                    return pkg ? pkg.replace(/^@/, '').replace(/\//g, '-') : null
+                },
+                test: /node_modules/,
+                priority: 2,
+                minSize: minPackageSize,
+            },
+            { name: 'vendor', test: /node_modules/, priority: 1 },
+        ],
+    }
 }
 
 interface EmitFileContext {
@@ -132,7 +207,7 @@ export interface WidgetBuildOptions {
 /**
  * Build the Rollup `input` map + the `widgets.json`-emitting plugin from `widgets.config.ts`.
  * `input` is read synchronously (needed before Rollup starts); `widgets.json` (with per-entry `css[]`,
- * REQ-007) is emitted in `generateBundle` from each entry chunk's `viteMetadata.importedCss`.
+ * REQ-007) is emitted in `generateBundle` from the `importedCss` of each entry's static import graph.
  */
 export function widgetBuild(options: WidgetBuildOptions = {}): {
     input: Record<string, string>
@@ -161,7 +236,8 @@ export function widgetBuild(options: WidgetBuildOptions = {}): {
                 if (key) {
                     widgets[key] = {
                         entry: chunk.fileName,
-                        css: chunk.viteMetadata?.importedCss ? [...chunk.viteMetadata.importedCss] : [],
+                        // whole static import graph, not just the entry — vendor chunks carry their own CSS
+                        css: collectEntryCss(chunk, bundle),
                     }
                 }
             }
