@@ -7,6 +7,10 @@
  * (today's `MfComponentLoader`) unchanged. Two apps can therefore use different transports on the
  * same page, and an app that hasn't shipped ESM widgets is byte-identically the old path.
  *
+ * Dev overrides: an app under an `import-map-override:` key is dispatched by PROBING `widgets.json`
+ * at the override base (see `resolveOverrideTransport` — RISK-005), because the same key also
+ * overrides the qiankun entry — so overriding works for both old- and new-architecture dev servers.
+ *
  * The legacy loader is INJECTED (not imported) so this package keeps ZERO qiankun dependency —
  * it is the package that survives when qiankun is retired.
  *
@@ -34,15 +38,46 @@
  *
  * @see _docs/frontend/plans/2026-07-02-15-40-plan-shell-dual-loader-esm-and-qiankun.md — REQ-001/002/003, TASK-004
  */
-import { createElement, type ComponentType, type ReactElement } from 'react'
+import { createElement, useEffect, useState, type ComponentType, type ReactElement } from 'react'
 
 import { EsmWidgetHost, type DualLoaderProps } from './EsmWidgetHost.js'
-import { isEsmApp } from './platformSignal.js'
+import { getAppSignal, isEsmApp, peekOverrideTransport, resolveOverrideTransport } from './platformSignal.js'
 
 export function createDualLoader(
     FallbackLoader: ComponentType<DualLoaderProps>,
 ): (props: DualLoaderProps) => ReactElement {
     return function MfComponent(props: DualLoaderProps): ReactElement {
+        const appName = props.app?.name
+        const signal = appName ? getAppSignal(appName) : undefined
+        // A dev override is transport-ambiguous — the same localStorage key also drives the qiankun
+        // entry override — so dispatch on the probed widgets.json verdict, not the optimistic `esm`
+        // mark (RISK-005). The probe-verdict cache is the source of truth; state only triggers the
+        // re-render once the (per-base, once-per-page) probe settles.
+        const overrideBase = signal?.version === 'dev-override' ? signal.base : undefined
+        const verdict = overrideBase ? peekOverrideTransport(overrideBase) : undefined
+        const [, rerenderOnProbe] = useState(0)
+        useEffect(() => {
+            if (!overrideBase || verdict) return
+            let cancelled = false
+            void resolveOverrideTransport(overrideBase).then(() => {
+                if (!cancelled) rerenderOnProbe((tick) => tick + 1)
+            })
+            return () => {
+                cancelled = true
+            }
+        }, [overrideBase, verdict])
+
+        if (props.app && overrideBase) {
+            if (!verdict) {
+                // Probing (one dev-only localhost round-trip) — render the caller's pending UX meanwhile.
+                return createElement(
+                    'div',
+                    { className: props.className, style: props.style },
+                    props.LoaderComponent ? createElement(props.LoaderComponent) : (props.placeholder ?? null),
+                )
+            }
+            return verdict === 'esm' ? createElement(EsmWidgetHost, props) : createElement(FallbackLoader, props)
+        }
         if (props.app && isEsmApp(props.app.name)) {
             return createElement(EsmWidgetHost, props)
         }

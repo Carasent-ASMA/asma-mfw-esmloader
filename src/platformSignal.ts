@@ -6,6 +6,7 @@
  *
  * @see _docs/frontend/plans/2026-07-02-15-40-plan-shell-dual-loader-esm-and-qiankun.md — REQ-003, TASK-002
  */
+import { fetchManifest, ManifestHttpError } from './widgetsManifest.js'
 
 /** One app entry in the injected platform payload. */
 export interface PlatformApp {
@@ -66,12 +67,14 @@ function getImportMapOverrideBase(appName: string): string | undefined {
 
 /**
  * The platform entry for one app. An active import-map-override wins (dev): the overridden app is
- * treated as native-ESM with `widgets.json` at the override base — so the ESM path is testable in a
- * shell with no injected platform. Otherwise the server-injected `__ASMA_PLATFORM__` entry.
+ * OPTIMISTICALLY treated as native-ESM with `widgets.json` at the override base — so the ESM path is
+ * testable in a shell with no injected platform. Otherwise the server-injected `__ASMA_PLATFORM__` entry.
  *
- * NOTE (transition semantic): in a dual-loader shell, an active override routes that app to the ESM
- * path. To dev a NOT-yet-migrated app on the qiankun path via the same widget, add it to the widget's
- * disabled list (`import-map-overrides-disabled`). The qiankun entry override still applies upstream.
+ * NOTE (transition semantic): the override key is TRANSPORT-AMBIGUOUS — `qiankun-overrides` applies
+ * the SAME key to the qiankun app's entry, so the base alone can't say which architecture the dev
+ * server speaks. The dual loader disambiguates via {@link resolveOverrideTransport} before mounting.
+ * (Adding the app to the widget's disabled list does NOT route it to qiankun-with-override: the
+ * qiankun side honors the disabled list too and falls back to the default entry.)
  */
 export function getAppSignal(appName: string): PlatformApp | undefined {
     const overrideBase = getImportMapOverrideBase(appName)
@@ -87,4 +90,45 @@ export function getAppSignal(appName: string): PlatformApp | undefined {
  */
 export function isEsmApp(appName: string): boolean {
     return getAppSignal(appName)?.esm === true
+}
+
+/** Transport verdict for a dev-override base, decided by probing its `widgets.json`. */
+export type OverrideTransport = 'esm' | 'qiankun'
+
+const overrideTransportCache = new Map<string, OverrideTransport>()
+
+/** Reset the probe-verdict cache (tests). */
+export function clearOverrideTransportCache(): void {
+    overrideTransportCache.clear()
+}
+
+/** The already-probed verdict for a base, if any — lets the dual loader dispatch synchronously on re-mounts. */
+export function peekOverrideTransport(base: string): OverrideTransport | undefined {
+    return overrideTransportCache.get(base)
+}
+
+/**
+ * Decide the transport for a dev-override base by probing its `widgets.json` (RISK-005 mitigation).
+ * Manifest served ⇒ `esm` (and the fetch is cached, so the ESM path's own resolve reuses it).
+ * HTTP error ⇒ `qiankun` — an old-architecture dev server; the qiankun loader re-applies the same
+ * override upstream (`qiankun-overrides` merges the key into the app's entry), so BOTH architectures
+ * stay dev-overridable with the one widget. Network failure (server not running) ⇒ `esm`, so
+ * EsmWidgetHost renders its actionable "start that dev server / clear the override" error.
+ *
+ * @see _docs/frontend/plans/2026-07-02-15-40-plan-shell-dual-loader-esm-and-qiankun.md:160 — RISK-005
+ */
+export async function resolveOverrideTransport(base: string): Promise<OverrideTransport> {
+    const cached = overrideTransportCache.get(base)
+    if (cached) {
+        return cached
+    }
+    let verdict: OverrideTransport
+    try {
+        await fetchManifest(base)
+        verdict = 'esm'
+    } catch (error) {
+        verdict = error instanceof ManifestHttpError ? 'qiankun' : 'esm'
+    }
+    overrideTransportCache.set(base, verdict)
+    return verdict
 }

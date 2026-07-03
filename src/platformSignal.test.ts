@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
 
-import { getAppSignal, getInjectedPlatform, isEsmApp } from './platformSignal.ts'
+import { clearOverrideTransportCache, getAppSignal, getInjectedPlatform, isEsmApp, peekOverrideTransport, resolveOverrideTransport } from './platformSignal.ts'
+import { clearManifestCache } from './widgetsManifest.ts'
 
-const g = globalThis as { window?: unknown; localStorage?: unknown }
+const g = globalThis as { window?: unknown; localStorage?: unknown; fetch?: unknown }
 afterEach(() => {
     delete g.window
     delete g.localStorage
+    delete g.fetch
+    clearManifestCache()
+    clearOverrideTransportCache()
 })
 
 function fakeLocalStorage(items: Record<string, string>): unknown {
@@ -91,5 +95,37 @@ describe('import-map-override dev signal (single-spa overrides widget)', () => {
         })
         // JSON.parse throws → caught → treated as no override rather than crashing the render path.
         assert.equal(isEsmApp('asma-app-directory'), false)
+    })
+})
+
+describe('resolveOverrideTransport (widgets.json probe at a dev-override base — RISK-005)', () => {
+    const BASE = 'http://localhost:3006/'
+
+    it('widgets.json served ⇒ esm', async () => {
+        g.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ widgets: {} }) } as Response)
+        assert.equal(await resolveOverrideTransport(BASE), 'esm')
+    })
+
+    it('HTTP 404 (an old-architecture qiankun dev server) ⇒ qiankun', async () => {
+        g.fetch = () => Promise.resolve({ ok: false, status: 404 } as Response)
+        assert.equal(await resolveOverrideTransport(BASE), 'qiankun')
+    })
+
+    it('network failure (dev server not running) ⇒ esm, so the host shows the actionable error', async () => {
+        g.fetch = () => Promise.reject(new TypeError('Failed to fetch'))
+        assert.equal(await resolveOverrideTransport(BASE), 'esm')
+    })
+
+    it('caches the verdict per base — one probe, then peek answers synchronously', async () => {
+        let calls = 0
+        g.fetch = () => {
+            calls++
+            return Promise.resolve({ ok: false, status: 404 } as Response)
+        }
+        assert.equal(peekOverrideTransport(BASE), undefined)
+        await resolveOverrideTransport(BASE)
+        await resolveOverrideTransport(BASE)
+        assert.equal(calls, 1)
+        assert.equal(peekOverrideTransport(BASE), 'qiankun')
     })
 })

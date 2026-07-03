@@ -21,6 +21,20 @@ export interface ResolvedWidget {
     css: string[]
 }
 
+/**
+ * The widgets.json request reached a server but got a non-2xx answer. Distinguishes "this base
+ * serves no manifest" (e.g. an old-architecture qiankun dev server behind a dev override) from a
+ * network failure (server not running) — the dual loader's override probe dispatches on it.
+ */
+export class ManifestHttpError extends Error {
+    constructor(
+        url: string,
+        readonly status: number,
+    ) {
+        super(`widgets.json not found at ${url} (HTTP ${status})`)
+    }
+}
+
 const manifestCache = new Map<string, Promise<WidgetManifest>>()
 
 /** Reset the manifest cache (tests / dev-override reloads). */
@@ -47,7 +61,7 @@ export function fetchManifest(base: string, manifestUrl?: string): Promise<Widge
     if (!cached) {
         cached = fetch(url).then((res) => {
             if (!res.ok) {
-                throw new Error(`widgets.json not found at ${url} (HTTP ${res.status})`)
+                throw new ManifestHttpError(url, res.status)
             }
             return res.json() as Promise<WidgetManifest>
         })
