@@ -13,6 +13,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactElement } fr
 
 import type { WidgetInstance, WidgetProps } from './contract.js'
 import { loadAndMountEsmWidget } from './loadEsmWidget.js'
+import { getAppSignal, IMPORT_MAP_OVERRIDE_PREFIX } from './platformSignal.js'
 import type { RegisteredAppName, WidgetPathFor, WidgetPropsFor } from './registry.js'
 
 /**
@@ -147,7 +148,19 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
             .catch((loadError: unknown) => {
                 if (cancelled) return
                 console.error(`EsmWidgetHost failed for ${appName}#${componentPath}`, loadError)
-                setError(loadError instanceof Error ? loadError.message : String(loadError))
+                // A `dev-override` signal means the base came from the import-map-overrides widget, not
+                // the platform. The usual failure then is "override points at a dev server that isn't
+                // running" — say so, and how to fix it, instead of a bare "Failed to fetch".
+                const signal = getAppSignal(appName)
+                const rawMessage = loadError instanceof Error ? loadError.message : String(loadError)
+                setError(
+                    signal?.version === 'dev-override'
+                        ? `"${appName}" is served from a dev override at ${signal.base}, which is unreachable ` +
+                          `(${rawMessage}). Start that dev server, or remove the override — in the ` +
+                          `import-map-overrides widget, or clear localStorage "${IMPORT_MAP_OVERRIDE_PREFIX}${appName}" ` +
+                          `— then reload.`
+                        : rawMessage,
+                )
                 setState('error')
             })
 

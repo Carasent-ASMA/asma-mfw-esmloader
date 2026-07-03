@@ -52,6 +52,11 @@ export function fetchManifest(base: string, manifestUrl?: string): Promise<Widge
             return res.json() as Promise<WidgetManifest>
         })
         manifestCache.set(url, cached)
+        // Don't leave a rejected promise stuck in the cache (e.g. a dev override whose server was down):
+        // once the server is up, a reload / re-navigate retries instead of replaying the old failure.
+        cached.catch(() => {
+            if (manifestCache.get(url) === cached) manifestCache.delete(url)
+        })
     }
     return cached
 }
