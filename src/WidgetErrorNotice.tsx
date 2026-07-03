@@ -1,22 +1,53 @@
 /**
  * The error state for a failed widget mount — SIZE-AWARE so it never overflows a small host slot
  * (a sidebar cell, an icon-sized container). It measures the slot the host gave us:
- *   - narrow slot  → just a red alert icon; the full message is a click/hover popover.
- *   - roomy slot   → the icon + a short "Widget failed" label (still click for the full message).
+ *   - narrow slot  → just a red alert icon; the full detail is a click/hover popover.
+ *   - roomy slot   → the icon + a short "Widget failed" label (still click for the detail).
  *
  * The popover is PERSISTENT (opens on hover/click, stays until its × is clicked — you can read/copy a
  * long "override unreachable" message) and is rendered through a PORTAL to `document.body`, so an
- * `overflow:hidden` ancestor (which small slots usually have) can't clip it.
+ * `overflow:hidden` ancestor (which small slots usually have) can't clip it. It shows WHICH widget
+ * failed (app + widget name) and the props that were passed, so a failure is diagnosable in place.
  *
  * Deliberately dependency-free (inline SVG, inline styles, no UI/icon lib) — this package stays the
  * lean transport that survives qiankun retirement; it must not drag a component library into every host.
  */
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 
 /** Below this content-box width the notice collapses to icon-only. */
 const COMPACT_MAX_WIDTH = 260
+const POPOVER_WIDTH = 340
 const DANGER = '#b91c1c'
+const MUTED = '#6b7280'
+const INK = '#1f2937'
+
+export interface WidgetErrorNoticeProps {
+    message: string
+    appName?: string
+    widgetName?: string
+    /** The props that were passed to the widget (rendered read-only for diagnosis). */
+    widgetProps?: Record<string, unknown>
+}
+
+/** A short, safe, single-line rendering of a prop value (handles functions / circular / long values). */
+function formatValue(value: unknown): string {
+    if (typeof value === 'string') return value.length > 120 ? `${JSON.stringify(value.slice(0, 120))}…` : JSON.stringify(value)
+    if (typeof value === 'function') return `ƒ ${value.name || 'anonymous'}()`
+    if (typeof value === 'bigint') return `${value}n`
+    if (typeof value === 'symbol') return value.toString()
+    if (value === null) return 'null'
+    if (value === undefined) return 'undefined'
+    if (typeof value === 'object') {
+        try {
+            const json = JSON.stringify(value)
+            return json.length > 120 ? `${json.slice(0, 120)}…` : json
+        } catch {
+            return Array.isArray(value) ? `Array(${value.length})` : '{…}'
+        }
+    }
+    return String(value)
+}
 
 function AlertIcon(): ReactElement {
     return (
@@ -28,11 +59,27 @@ function AlertIcon(): ReactElement {
     )
 }
 
-export function WidgetErrorNotice({ message }: { message: string }): ReactElement {
+const labelStyle: CSSProperties = { color: MUTED, fontWeight: 600, whiteSpace: 'nowrap' }
+const monoStyle: CSSProperties = { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', wordBreak: 'break-all' }
+
+function MetaRow({ label, value }: { label: string; value: string }): ReactElement {
+    return (
+        <>
+            <span style={labelStyle}>{label}</span>
+            <span style={{ ...monoStyle, color: INK }}>{value}</span>
+        </>
+    )
+}
+
+export function WidgetErrorNotice({ message, appName, widgetName, widgetProps }: WidgetErrorNoticeProps): ReactElement {
     const anchorRef = useRef<HTMLSpanElement>(null)
     const [compact, setCompact] = useState(false)
     const [open, setOpen] = useState(false)
-    const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
+    const [pos, setPos] = useState<{ left: number; top?: number; bottom?: number; maxHeight: number }>({
+        left: 0,
+        top: 0,
+        maxHeight: 480,
+    })
 
     // Size-awareness: watch the slot the host gave us (our parent), collapse to icon-only when narrow.
     useEffect(() => {
@@ -45,16 +92,25 @@ export function WidgetErrorNotice({ message }: { message: string }): ReactElemen
         return () => observer.disconnect()
     }, [])
 
-    // Anchor the portaled popover to the icon (fixed coords) so it escapes any clipping ancestor.
+    // Anchor the portaled popover to the icon (fixed coords), flipping above/below to whichever side has
+    // room, so it escapes clipping ancestors and never runs off the viewport.
     const openPopover = (): void => {
         const rect = anchorRef.current?.getBoundingClientRect()
         if (rect) {
-            const width = 320
-            const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
-            setPos({ top: rect.bottom + 4, left })
+            const left = Math.max(8, Math.min(rect.left, window.innerWidth - POPOVER_WIDTH - 8))
+            const spaceBelow = window.innerHeight - rect.bottom
+            const spaceAbove = rect.top
+            const below = spaceBelow >= 220 || spaceBelow >= spaceAbove
+            setPos(
+                below
+                    ? { left, top: rect.bottom + 4, maxHeight: spaceBelow - 12 }
+                    : { left, bottom: window.innerHeight - rect.top + 4, maxHeight: spaceAbove - 12 },
+            )
         }
         setOpen(true)
     }
+
+    const propEntries = widgetProps ? Object.entries(widgetProps) : []
 
     return (
         <span
@@ -93,44 +149,93 @@ export function WidgetErrorNotice({ message }: { message: string }): ReactElemen
                         onClick={(event) => event.stopPropagation()}
                         style={{
                             position: 'fixed',
-                            top: pos.top,
                             left: pos.left,
+                            ...(pos.top !== undefined ? { top: pos.top } : { bottom: pos.bottom }),
                             zIndex: 2147483647,
-                            width: 320,
+                            width: POPOVER_WIDTH,
                             maxWidth: 'calc(100vw - 16px)',
+                            maxHeight: pos.maxHeight,
+                            overflowY: 'auto',
                             background: '#fff',
-                            color: '#1f2937',
+                            color: INK,
                             border: '1px solid #e5e7eb',
-                            borderRadius: 6,
-                            boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
-                            padding: '10px 32px 10px 12px',
+                            borderRadius: 8,
+                            boxShadow: '0 6px 24px rgba(0,0,0,0.18)',
                             font: '12px/1.5 system-ui, -apple-system, sans-serif',
-                            wordBreak: 'break-word',
                         }}
                     >
-                        <button
-                            type="button"
-                            aria-label="Close"
-                            onClick={(event) => {
-                                event.stopPropagation()
-                                setOpen(false)
-                            }}
+                        {/* header */}
+                        <div
                             style={{
-                                position: 'absolute',
-                                top: 4,
-                                right: 6,
-                                border: 'none',
-                                background: 'none',
-                                cursor: 'pointer',
-                                fontSize: 16,
-                                lineHeight: 1,
-                                color: '#6b7280',
+                                position: 'sticky',
+                                top: 0,
+                                background: '#fff',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                padding: '10px 12px',
+                                borderBottom: '1px solid #f0f0f0',
                             }}
                         >
-                            ×
-                        </button>
-                        <strong style={{ display: 'block', color: DANGER, marginBottom: 4 }}>Widget failed</strong>
-                        {message}
+                            <AlertIcon />
+                            <strong style={{ color: DANGER, flex: 1 }}>Widget failed</strong>
+                            <button
+                                type="button"
+                                aria-label="Close"
+                                onClick={(event) => {
+                                    event.stopPropagation()
+                                    setOpen(false)
+                                }}
+                                style={{
+                                    border: 'none',
+                                    background: 'none',
+                                    cursor: 'pointer',
+                                    fontSize: 16,
+                                    lineHeight: 1,
+                                    color: MUTED,
+                                    padding: 0,
+                                }}
+                            >
+                                ×
+                            </button>
+                        </div>
+
+                        <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            {/* which widget */}
+                            {(appName || widgetName) && (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 10px', alignItems: 'baseline' }}>
+                                    {appName ? <MetaRow label="App" value={appName} /> : null}
+                                    {widgetName ? <MetaRow label="Widget" value={widgetName} /> : null}
+                                </div>
+                            )}
+
+                            {/* the error */}
+                            <div style={{ color: INK, wordBreak: 'break-word' }}>{message}</div>
+
+                            {/* props passed */}
+                            <div>
+                                <div style={{ ...labelStyle, marginBottom: 4 }}>
+                                    Props{propEntries.length ? '' : ' — none'}
+                                </div>
+                                {propEntries.length > 0 && (
+                                    <div
+                                        style={{
+                                            background: '#f9fafb',
+                                            border: '1px solid #f0f0f0',
+                                            borderRadius: 6,
+                                            padding: '6px 8px',
+                                            display: 'grid',
+                                            gridTemplateColumns: 'auto 1fr',
+                                            gap: '2px 10px',
+                                        }}
+                                    >
+                                        {propEntries.map(([key, value]) => (
+                                            <MetaRow key={key} label={key} value={formatValue(value)} />
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
                     </div>,
                     document.body,
                 )}

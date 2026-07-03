@@ -184,7 +184,14 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
     return (
         <div className={className} style={style}>
             {state === 'loading' ? (LoaderComponent ? <LoaderComponent /> : (placeholder ?? null)) : null}
-            {state === 'error' ? <WidgetErrorNotice message={error ?? 'unknown error'} /> : null}
+            {state === 'error' ? (
+                <WidgetErrorNotice
+                    message={error ?? 'unknown error'}
+                    appName={appName}
+                    widgetName={componentPath}
+                    widgetProps={mountProps}
+                />
+            ) : null}
             <div ref={containerRef} />
         </div>
     )
