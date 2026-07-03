@@ -15,6 +15,7 @@ import type { WidgetInstance, WidgetProps } from './contract.js'
 import { loadAndMountEsmWidget } from './loadEsmWidget.js'
 import { getAppSignal, IMPORT_MAP_OVERRIDE_PREFIX } from './platformSignal.js'
 import type { RegisteredAppName, WidgetPathFor, WidgetPropsFor } from './registry.js'
+import { WidgetErrorNotice } from './WidgetErrorNotice.js'
 
 /**
  * A micro-app entry — a structural re-declaration of qiankun's `Entry`
@@ -183,7 +184,7 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
     return (
         <div className={className} style={style}>
             {state === 'loading' ? (LoaderComponent ? <LoaderComponent /> : (placeholder ?? null)) : null}
-            {state === 'error' ? <span style={{ color: '#b91c1c' }}>widget failed: {error}</span> : null}
+            {state === 'error' ? <WidgetErrorNotice message={error ?? 'unknown error'} /> : null}
             <div ref={containerRef} />
         </div>
     )
