@@ -269,16 +269,28 @@ export function widgetDev(options: WidgetBuildOptions = {}): {
  * Recommended `output.codeSplitting` for widget builds — REUSABLE vendor chunks instead of one fat entry:
  *   1. `react` — react/react-dom/scheduler as ONE chunk: the import-map substitution target when the
  *      shared-kernel endgame lands (CON-002), and the chunk every widget of the app shares today.
- *   2. per-package — each big dependency (`mui-material`, `tailwind-merge`, …) is its own chunk, so a
+ *   2. per-package — each big dependency (`mui-material`, `tanstack-table-core`, …) is its own chunk, so a
  *      page loading N widgets of the app fetches each library once, and a widget that doesn't use a
  *      library doesn't fetch it.
  *   3. `vendor` — the small-package tail, one shared chunk.
  * App source stays under automatic chunking (entry = the widget's own code; code shared between widget
  * entries auto-splits). Pass to `build.rollupOptions.output.codeSplitting`.
+ *
+ * `includeDependenciesRecursively: false` is DELIBERATE and load-bearing: with rolldown's default (`true`)
+ * a package's group also swallows that package's OWN dependencies, so a barrel lib like `asma-ui-core`
+ * drags @mui/@tanstack/@dnd-kit/date-fns INTO its chunk (~815 kB, mostly not asma-ui-core). Off, each of
+ * those deps lands in its own reusable chunk and asma-ui-core drops to ~180 kB of actually-its-own code.
+ *
+ * REQUIRED sibling options (rolldown errors `INVALID_OPTION` otherwise): the build must set
+ * `rollupOptions.preserveEntrySignatures: 'allow-extension'` (keeps the entry's `mount` export) and
+ * `output.strictExecutionOrder: true`.
  */
-export function widgetCodeSplitting(options: WidgetCodeSplittingOptions = {}): { groups: WidgetChunkGroup[] } {
+export function widgetCodeSplitting(
+    options: WidgetCodeSplittingOptions = {},
+): { groups: WidgetChunkGroup[]; includeDependenciesRecursively: false } {
     const minPackageSize = options.minPackageSize ?? 20 * 1024
     return {
+        includeDependenciesRecursively: false,
         groups: [
             { name: 'react', test: /node_modules[\\/](?:react|react-dom|scheduler)[\\/]/, priority: 3 },
             {

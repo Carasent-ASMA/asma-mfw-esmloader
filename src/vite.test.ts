@@ -106,6 +106,8 @@ test('widgetCodeSplitting groups: react kernel wins over per-package; tail falls
     assert.equal(nameOf('/repo/src/App.tsx'), null)
     assert.equal(vendor!.name, 'vendor')
     assert.equal(widgetCodeSplitting({ minPackageSize: 1 }).groups[1]!.minSize, 1)
+    // load-bearing: off, so a barrel lib's deps split into their own reusable chunks (not folded into it)
+    assert.equal(widgetCodeSplitting().includeDependenciesRecursively, false)
 })
 
 test('devWrapperSource installs the react-refresh preamble before importing the widget source', () => {

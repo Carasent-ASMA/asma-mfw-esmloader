@@ -431,8 +431,18 @@ export function injectMetadataPlugin(): Plugin {
                     const wantsHtml = !req.url?.includes('.') && req.headers.accept?.includes('text/html')
                     if (!wantsHtml) return next()
 
+                    // Derive the deployed origin from the LOCAL host: the dev server runs on a
+                    // `<deployed-env>.localhost` name (see `server.host` in the wiring below), so
+                    // stripping the port and swapping `localhost` for the real TLD yields the
+                    // matching deployed env — `avansas.dev.adopus.localhost:3000` → `avansas.dev.adopus.no`
+                    // (`health` for our adcuris domains). One config serves every environment.
+                    const host = req.headers.host ?? ''
+                    const backendHost = host
+                        .split(':')[0]
+                        ?.replace('localhost', host.includes('adcuris') ? 'health' : 'no')
+
                     // Fetch the DEPLOYED first-hit page for this URL and lift its platform script:
-                    const backendHtml = await (await fetch(`https://avansas.dev.adopus.no${req.url}`)).text()
+                    const backendHtml = await (await fetch(`https://${backendHost}${req.url}`)).text()
                     const { platform } = pickInjectedScripts(backendHtml)
 
                     const indexHtml = await readFile(path.resolve(process.cwd(), 'index.html'), 'utf-8')
@@ -462,6 +472,11 @@ export default defineConfig({
     plugins: [injectMetadataPlugin(), react()],
     resolve: { dedupe: ['react', 'react-dom'] },
     server: {
+        // Load-bearing pair with injectMetadataPlugin: a `<deployed-env>.localhost` name is what
+        // the plugin derives the deployed origin from (`…adopus.localhost` → `…adopus.no`) — and
+        // cookies scoped to the env's parent domain resolve locally too. Add the name to /etc/hosts
+        // if your resolver doesn't wildcard *.localhost to 127.0.0.1 (macOS/modern browsers do).
+        host: 'avansas.dev.adopus.localhost',
         port: 3000,
         proxy,
     },
