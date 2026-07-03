@@ -185,17 +185,26 @@ interface DevServerLike {
  * The dev wrapper module served for one widget: installs the react-refresh preamble + Vite client
  * BEFORE the widget module executes (mirrors asma-qiankun-plugin-vite's dev entry), then re-exports
  * `mount` from the real SOURCE module — full HMR, zero builds. Pure + unit-testable.
+ *
+ * `injectIntoGlobalHook` must run UNCONDITIONALLY (guarded only per dev-server origin): the standard
+ * `__vite_plugin_react_preamble_installed__` flag only says SOME runtime injected — when the HOST page
+ * is itself a Vite+react app (the real shell) that flag is already true, but a widget's components
+ * re-render through THIS server's refresh runtime, so skipping the injection silently kills HMR for
+ * every widget (updates arrive, nothing re-renders). Same unconditional injection as the qiankun
+ * plugin's dev entry; the per-origin guard keeps N widgets of one app from double-wrapping the hook.
  */
 export function devWrapperSource(base: string, targetUrl: string): string {
     return [
         `import ${JSON.stringify(`${base}@vite/client`)}`,
         `import RefreshRuntime from ${JSON.stringify(`${base}@react-refresh`)}`,
-        `if (!window.__vite_plugin_react_preamble_installed__) {`,
+        `const originFlag = '__asma_widget_dev_refresh__' + new URL(import.meta.url).origin`,
+        `if (!window[originFlag]) {`,
         `    RefreshRuntime.injectIntoGlobalHook(window)`,
-        `    window.$RefreshReg$ = () => {}`,
-        `    window.$RefreshSig$ = () => (type) => type`,
-        `    window.__vite_plugin_react_preamble_installed__ = true`,
+        `    window[originFlag] = true`,
         `}`,
+        `window.$RefreshReg$ = window.$RefreshReg$ || (() => {})`,
+        `window.$RefreshSig$ = window.$RefreshSig$ || (() => (type) => type)`,
+        `window.__vite_plugin_react_preamble_installed__ = true`,
         `const widgetModule = await import(${JSON.stringify(targetUrl)})`,
         `export const mount = widgetModule.mount`,
     ].join('\n')

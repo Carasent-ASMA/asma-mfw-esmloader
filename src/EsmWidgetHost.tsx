@@ -95,6 +95,7 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
     props,
     placeholder,
     className,
+    disableWrapperStyles,
     LoaderComponent,
     onMounted,
     style,
@@ -181,8 +182,15 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [props])
 
+    // Parity with MfComponentLoader's default `__asma_microapp_wrapper__` class (width/height 100%,
+    // opt-out via `disableWrapperStyles`); the container leaf mirrors the wrapper box because under
+    // qiankun the widget mounted directly into that single 100%-sized div.
+    const wrapperStyle: CSSProperties | undefined = disableWrapperStyles
+        ? style
+        : { width: '100%', height: '100%', ...style }
+
     return (
-        <div className={className} style={style}>
+        <div className={className} style={wrapperStyle}>
             {state === 'loading' ? (LoaderComponent ? <LoaderComponent /> : (placeholder ?? null)) : null}
             {state === 'error' ? (
                 <WidgetErrorNotice
@@ -192,7 +200,7 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
                     widgetProps={mountProps}
                 />
             ) : null}
-            <div ref={containerRef} />
+            <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
         </div>
     )
 }

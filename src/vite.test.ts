@@ -117,6 +117,12 @@ test('devWrapperSource installs the react-refresh preamble before importing the 
     assert.ok(preambleAt > -1 && importAt > -1 && preambleAt < importAt, 'preamble must run before the widget import')
     assert.match(source, /import "\/@vite\/client"/)
     assert.match(source, /export const mount = widgetModule\.mount/)
+    // Regression: the runtime injection must NOT hide behind the standard preamble flag — a Vite+react
+    // HOST page (the real shell) sets that flag first, which used to skip this server's injection and
+    // silently kill widget HMR. Injection is guarded per dev-server origin instead.
+    assert.ok(!source.includes('if (!window.__vite_plugin_react_preamble_installed__)'), 'must not gate injection on the shared preamble flag')
+    assert.match(source, /injectIntoGlobalHook/)
+    assert.match(source, /__asma_widget_dev_refresh__.*import\.meta\.url/)
 })
 
 /** Scaffold a fake app root with a widgets.config.ts + entry file; return a configured widgetDev plugin. */
