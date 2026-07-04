@@ -282,6 +282,7 @@ export function widgetDev(options: WidgetBuildOptions = {}): {
  *      page loading N widgets of the app fetches each library once, and a widget that doesn't use a
  *      library doesn't fetch it.
  *   3. `vendor` — the small-package tail, one shared chunk.
+ *   4. `esm-external-require` — rolldown's synthetic CJS require-shims for KERNEL_EXTERNAL libs, isolated.
  * App source stays under automatic chunking (entry = the widget's own code; code shared between widget
  * entries auto-splits). Pass to `build.rollupOptions.output.codeSplitting`.
  *
@@ -289,6 +290,20 @@ export function widgetDev(options: WidgetBuildOptions = {}): {
  * a package's group also swallows that package's OWN dependencies, so a barrel lib like `asma-ui-core`
  * drags @mui/@tanstack/@dnd-kit/date-fns INTO its chunk (~815 kB, mostly not asma-ui-core). Off, each of
  * those deps lands in its own reusable chunk and asma-ui-core drops to ~180 kB of actually-its-own code.
+ *
+ * The `esm-external-require` group is REQUIRED for kernel-external builds: when a lib is externalized,
+ * rolldown's `esm-external-require` plugin synthesizes a tiny CJS-interop module per lib
+ * (`builtin:esm-external-require-<lib>` = `module.exports = {...React}`) so bundled CJS deps' `require()`
+ * keeps working. Since the externalized lib is NOT a `node_modules` path, that shim matches none of the
+ * groups above, and — with `preserveEntrySignatures: 'allow-extension'` (below) — rolldown FOLDS it into
+ * whatever chunk first reaches it, which can be a widget ENTRY. Shared chunks (`vendor`) then import the
+ * shim back from the entry → a `vendor ⇄ entry` cycle; a widget entry runs its `mount` bootstrap at
+ * module-eval, so loading any widget that pulls `vendor` executes the entry mid-cycle and calls a
+ * not-yet-initialized binding → `EsmWidgetHost failed … TypeError: <x> is not a function`. Pinning the
+ * shims to their own side-effect-free chunk (a clean leaf importing only the external libs) guarantees no
+ * entry is ever imported by a shared chunk. It is disjoint from the `node_modules` groups, so its priority
+ * only needs to be defined; `'strict'`/`'exports-only'` (which would forbid the fold) are rejected by
+ * rolldown alongside `includeDependenciesRecursively:false`, hence the chunk-level fix.
  *
  * REQUIRED sibling options (rolldown errors `INVALID_OPTION` otherwise): the build must set
  * `rollupOptions.preserveEntrySignatures: 'allow-extension'` (keeps the entry's `mount` export) and
@@ -312,6 +327,9 @@ export function widgetCodeSplitting(
                 minSize: minPackageSize,
             },
             { name: 'vendor', test: /node_modules/, priority: 1 },
+            // Kernel-external CJS require-shims → their own leaf chunk (see doc above). Priority 4 is
+            // arbitrary-but-defined: the `builtin:esm-external-require-*` id matches no other group.
+            { name: 'esm-external-require', test: /builtin:esm-external-require/, priority: 4 },
         ],
     }
 }

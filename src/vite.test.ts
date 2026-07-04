@@ -110,6 +110,18 @@ test('widgetCodeSplitting groups: react kernel wins over per-package; tail falls
     assert.equal(widgetCodeSplitting().includeDependenciesRecursively, false)
 })
 
+test('widgetCodeSplitting isolates kernel-external CJS require-shims into their own leaf chunk', () => {
+    const shim = widgetCodeSplitting().groups.find((g) => g.name === 'esm-external-require')
+    assert.ok(shim, 'esm-external-require group must exist')
+    // matches the synthetic `builtin:esm-external-require-<lib>` interop module rolldown emits for externals…
+    assert.match('builtin:esm-external-require-react', shim!.test!)
+    assert.match('builtin:esm-external-require-mobx-state-tree', shim!.test!)
+    // …and NOTHING in node_modules, so it never competes with react/per-package/vendor (disjoint groups).
+    assert.doesNotMatch('/repo/node_modules/react/index.js', shim!.test!)
+    assert.doesNotMatch('/repo/node_modules/.pnpm/mobx@6.0.0/node_modules/mobx/dist/mobx.esm.js', shim!.test!)
+    assert.equal(typeof shim!.priority, 'number')
+})
+
 test('devWrapperSource installs the react-refresh preamble before importing the widget source', () => {
     const source = devWrapperSource('/', '/src/widgets/MyWidget.tsx')
     const preambleAt = source.indexOf('__vite_plugin_react_preamble_installed__')
