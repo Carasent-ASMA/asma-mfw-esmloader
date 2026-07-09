@@ -66,6 +66,32 @@ function getImportMapOverrideBase(appName: string): string | undefined {
 }
 
 /**
+ * Add `appName` to the import-map-overrides widget's disabled list (the `import-map-overrides-disabled`
+ * localStorage JSON array), so its dev override is ignored on the next load — the "disable override"
+ * escape hatch from a {@link WidgetErrorNotice} when the override points at a dev server that isn't
+ * running. Idempotent (won't duplicate), and a best-effort no-op if storage is blocked.
+ */
+export function disableImportMapOverride(appName: string): void {
+    if (typeof localStorage === 'undefined') return
+    try {
+        let disabled: string[] = []
+        const raw = localStorage.getItem(IMPORT_MAP_OVERRIDES_DISABLED_KEY)
+        if (raw) {
+            try {
+                const parsed: unknown = JSON.parse(raw)
+                if (Array.isArray(parsed)) disabled = parsed.filter((name): name is string => typeof name === 'string')
+            } catch {
+                // corrupt list — reset it rather than leave the override stuck enabled
+            }
+        }
+        if (!disabled.includes(appName)) disabled.push(appName)
+        localStorage.setItem(IMPORT_MAP_OVERRIDES_DISABLED_KEY, JSON.stringify(disabled))
+    } catch {
+        // storage blocked — best-effort, nothing more to do
+    }
+}
+
+/**
  * The platform entry for one app. An active import-map-override wins (dev): the overridden app is
  * OPTIMISTICALLY treated as native-ESM with `widgets.json` at the override base — so the ESM path is
  * testable in a shell with no injected platform. Otherwise the server-injected `__ASMA_PLATFORM__` entry.

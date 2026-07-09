@@ -13,7 +13,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactElement } fr
 
 import type { WidgetInstance, WidgetProps } from './contract.js'
 import { loadAndMountEsmWidget } from './loadEsmWidget.js'
-import { getAppSignal, IMPORT_MAP_OVERRIDE_PREFIX } from './platformSignal.js'
+import { disableImportMapOverride, getAppSignal } from './platformSignal.js'
 import type { RegisteredAppName, WidgetPathFor, WidgetPropsFor } from './registry.js'
 import { WidgetErrorNotice } from './WidgetErrorNotice.js'
 
@@ -108,6 +108,8 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
     const instanceRef = useRef<WidgetInstance<typeof mountProps> | null>(null)
     const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
     const [error, setError] = useState<string>()
+    // Set to the app name only when the failure was a dev override; drives the "disable override" button.
+    const [failedOverrideApp, setFailedOverrideApp] = useState<string>()
 
     // `app` is either the bare name (direct ESM use) or the { name, entry } object (dual-loader forward).
     const appName = typeof app === 'string' ? app : app?.name
@@ -155,12 +157,13 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
                 // running" — say so, and how to fix it, instead of a bare "Failed to fetch".
                 const signal = getAppSignal(appName)
                 const rawMessage = loadError instanceof Error ? loadError.message : String(loadError)
+                const isDevOverride = signal?.version === 'dev-override'
+                setFailedOverrideApp(isDevOverride ? appName : undefined)
                 setError(
-                    signal?.version === 'dev-override'
+                    isDevOverride
                         ? `"${appName}" is served from a dev override at ${signal.base}, which is unreachable ` +
-                          `(${rawMessage}). Start that dev server, or remove the override — in the ` +
-                          `import-map-overrides widget, or clear localStorage "${IMPORT_MAP_OVERRIDE_PREFIX}${appName}" ` +
-                          `— then reload.`
+                          `(${rawMessage}). Start that dev server, or click "disable override" below to temporarily ` +
+                          `disable this app in the import-map-overrides widget and reload automatically.`
                         : rawMessage,
                 )
                 setState('error')
@@ -198,6 +201,14 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
                     appName={appName}
                     widgetName={componentPath}
                     widgetProps={mountProps}
+                    onDisableOverride={
+                        failedOverrideApp
+                            ? () => {
+                                  disableImportMapOverride(failedOverrideApp)
+                                  window.location.reload()
+                              }
+                            : undefined
+                    }
                 />
             ) : null}
             <div ref={containerRef} style={{ width: '100%', height: '100%' }} />

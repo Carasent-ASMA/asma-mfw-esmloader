@@ -21,6 +21,8 @@ const POPOVER_WIDTH = 340
 const DANGER = '#b91c1c'
 const MUTED = '#6b7280'
 const INK = '#1f2937'
+const DELTA_500 = '#7a899e'
+const DELTA_700 = '#49525f'
 
 export interface WidgetErrorNoticeProps {
     message: string
@@ -28,6 +30,11 @@ export interface WidgetErrorNoticeProps {
     widgetName?: string
     /** The props that were passed to the widget (rendered read-only for diagnosis). */
     widgetProps?: Record<string, unknown>
+    /**
+     * When set, renders a "disable override" button in the popover — shown only for a failed dev
+     * override (import-map-overrides). Clicking it disables the override and reloads.
+     */
+    onDisableOverride?: () => void
 }
 
 /** A short, safe, single-line rendering of a prop value (handles functions / circular / long values). */
@@ -71,7 +78,7 @@ function MetaRow({ label, value }: { label: string; value: string }): ReactEleme
     )
 }
 
-export function WidgetErrorNotice({ message, appName, widgetName, widgetProps }: WidgetErrorNoticeProps): ReactElement {
+export function WidgetErrorNotice({ message, appName, widgetName, widgetProps, onDisableOverride }: WidgetErrorNoticeProps): ReactElement {
     const anchorRef = useRef<HTMLSpanElement>(null)
     const [compact, setCompact] = useState(false)
     const [open, setOpen] = useState(false)
@@ -211,6 +218,30 @@ export function WidgetErrorNotice({ message, appName, widgetName, widgetProps }:
 
                             {/* the error */}
                             <div style={{ color: INK, wordBreak: 'break-word' }}>{message}</div>
+
+                            {/* disable override — only for a failed dev override */}
+                            {onDisableOverride && (
+                                <button
+                                    type="button"
+                                    onClick={(event) => {
+                                        event.stopPropagation()
+                                        onDisableOverride()
+                                    }}
+                                    style={{
+                                        alignSelf: 'flex-start',
+                                        border: `1px solid ${DELTA_500}`,
+                                        background: '#fff',
+                                        color: DELTA_700,
+                                        borderRadius: 6,
+                                        padding: '5px 10px',
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        font: 'inherit',
+                                    }}
+                                >
+                                    Disable override
+                                </button>
+                            )}
 
                             {/* props passed */}
                             <div>
