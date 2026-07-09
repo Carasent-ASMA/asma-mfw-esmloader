@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
 
-import { clearOverrideTransportCache, getAppSignal, getInjectedPlatform, isEsmApp, peekOverrideTransport, resolveOverrideTransport } from './platformSignal.ts'
+import { clearOverrideTransportCache, disableImportMapOverride, getAppSignal, getInjectedPlatform, isEsmApp, peekOverrideTransport, resolveOverrideTransport } from './platformSignal.ts'
 import { clearManifestCache } from './widgetsManifest.ts'
 
 const g = globalThis as { window?: unknown; localStorage?: unknown; fetch?: unknown }
@@ -14,7 +14,12 @@ afterEach(() => {
 })
 
 function fakeLocalStorage(items: Record<string, string>): unknown {
-    return { getItem: (k: string) => items[k] ?? null }
+    return {
+        getItem: (k: string) => items[k] ?? null,
+        setItem: (k: string, v: string) => {
+            items[k] = v
+        },
+    }
 }
 
 describe('getInjectedPlatform', () => {
@@ -95,6 +100,30 @@ describe('import-map-override dev signal (single-spa overrides widget)', () => {
         })
         // JSON.parse throws → caught → treated as no override rather than crashing the render path.
         assert.equal(isEsmApp('asma-app-directory'), false)
+    })
+})
+
+describe('disableImportMapOverride (the "disable override" escape hatch)', () => {
+    it('appends the app to an empty/absent disabled list', () => {
+        const store: Record<string, string> = {}
+        g.localStorage = fakeLocalStorage(store)
+        disableImportMapOverride('adopus-app-directory')
+        assert.deepEqual(JSON.parse(store['import-map-overrides-disabled']), ['adopus-app-directory'])
+    })
+
+    it('appends to an existing list without duplicating', () => {
+        const store: Record<string, string> = { 'import-map-overrides-disabled': '["asma-app-chat"]' }
+        g.localStorage = fakeLocalStorage(store)
+        disableImportMapOverride('adopus-app-directory')
+        disableImportMapOverride('adopus-app-directory') // idempotent
+        assert.deepEqual(JSON.parse(store['import-map-overrides-disabled']), ['asma-app-chat', 'adopus-app-directory'])
+    })
+
+    it('recovers from a malformed list by resetting to just this app', () => {
+        const store: Record<string, string> = { 'import-map-overrides-disabled': 'not-json{' }
+        g.localStorage = fakeLocalStorage(store)
+        disableImportMapOverride('adopus-app-directory')
+        assert.deepEqual(JSON.parse(store['import-map-overrides-disabled']), ['adopus-app-directory'])
     })
 })
 

@@ -22,6 +22,7 @@ export {
     IMPORT_MAP_OVERRIDE_PREFIX,
     IMPORT_MAP_OVERRIDES_DISABLED_KEY,
     clearOverrideTransportCache,
+    disableImportMapOverride,
     getAppSignal,
     getInjectedPlatform,
     isEsmApp,
