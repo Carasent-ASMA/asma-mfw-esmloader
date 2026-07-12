@@ -4,11 +4,23 @@
  * `createDualLoader` dispatches per-app between this and the legacy qiankun loader with no flag.
  *
  * `./contract` is a separate entry (what an app's widget build imports — `defineReactWidget` +
- * types) so widget bundles don't pull the host/loader code.
+ * types) so widget bundles don't pull the host/loader code. The widget-AUTHORING surface (including
+ * the readiness lifecycle) is ALSO re-exported here from the base entry, so a widget can author from
+ * the single externalized `asma-mfw-esmloader` specifier without a subpath (one shared runtime chunk).
  *
  * @see _docs/frontend/plans/2026-07-02-15-40-plan-shell-dual-loader-esm-and-qiankun.md
  */
 export { createDualLoader } from './createDualLoader.js'
+
+// Widget authoring surface (base entry — see note above). `defineReactWidget` is the raw primitive;
+// `defineWidget` is the lifecycle-aware form that also carries the `onReady` readiness contract.
+export { defineReactWidget } from './contract.js'
+export {
+    defineWidget,
+    useMarkWidgetReady,
+    type AsmaWidgetLifecycleProps,
+    type DefineWidgetOptions,
+} from './lifecycle.js'
 export {
     EsmWidgetHost,
     type DualLoaderProps,

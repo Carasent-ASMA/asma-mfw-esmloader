@@ -85,6 +85,40 @@ If a widget takes no providers, it's even shorter — `export const { mount } = 
 
 Keep the app-wide providers in their **own file** (`src/AppProviders.tsx`), separate from `App.tsx` (which owns routes). Widget entries import `AppProviders` but **never** `App.tsx`, so a widget bundle doesn't pull in the router and every page.
 
+### Step 2b — (optional) opt into the readiness lifecycle
+
+A readiness-aware host (e.g. the app-shell's `WidgetSlot`, which covers a widget with a skeleton until it is ready) can pass an optional `onReady` callback in the widget's mount props. Calling it lets the host reveal the widget **precisely**, instead of guessing from the DOM (spinner sniffing, quiet-window timers). It is **opt-in and additive**: a widget that never calls it still works via the host's fallback heuristic, and it is a no-op when the widget is mounted outside a readiness-aware host.
+
+Author with **`defineWidget`** (the lifecycle-aware form of `defineReactWidget`, imported from the **base** `asma-mfw-esmloader` entry so it resolves to the one shared runtime chunk — not the `/contract` subpath), then in the leaf that owns the loading state call **`useMarkWidgetReady(!isLoading)`**:
+
+```tsx
+// src/widgets/CustomersWidget.tsx — data-driven widget
+import { defineWidget } from 'asma-mfw-esmloader'
+
+export const { mount } = defineWidget((props: ComponentProps<typeof Customers>) => (
+    <AppProviders>
+        <Customers {...props} />
+    </AppProviders>
+))
+
+// deep in the leaf that owns the fetch (no prop drilling — it reads context):
+import { useMarkWidgetReady } from 'asma-mfw-esmloader'
+const { data, isLoading } = useCustomers()
+useMarkWidgetReady(!isLoading) // fires the host's onReady once, when data has arrived
+```
+
+For a widget with **no async data** behind its first paint, skip the hook and mark ready right after mount:
+
+```tsx
+export const { mount } = defineWidget(() => (
+    <AppProviders>
+        <StaticWidget />
+    </AppProviders>
+), { readyOnMount: true })
+```
+
+`useMarkWidgetReady(true)` latches — it fires `onReady` exactly once; later flips back to `false` (refetches) are ignored. `defineWidget` also adds `onReady` to the widget's mount-prop type, so a registered app advertises it to hosts through the typed registry.
+
 ### Step 3 — (optional) register the widgets for strong typing
 
 Three lines, computed from `widgets` (no codegen). After this, a host that type-depends on your app gets autocompleted, prop-checked `<EsmWidgetHost>` calls. Skip it and everything still works, just loosely typed. See [Strong widget typing](#strong-widget-typing--the-full-cycle) for the full cycle.
