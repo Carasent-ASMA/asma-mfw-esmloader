@@ -37,6 +37,7 @@ export {
     disableImportMapOverride,
     getAppSignal,
     getInjectedPlatform,
+    getTransportProbeBase,
     isEsmApp,
     peekOverrideTransport,
     resolveOverrideTransport,

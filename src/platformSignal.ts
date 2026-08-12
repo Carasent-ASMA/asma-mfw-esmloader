@@ -112,13 +112,27 @@ export function getAppSignal(appName: string): PlatformApp | undefined {
 
 /**
  * Should this app be loaded via native-ESM? True only when the injected payload marks the
- * app@version `esm`. Absent payload / unmarked app ⇒ false ⇒ caller falls back to qiankun.
+ * app@version `esm`. Absent payload / unmarked app ⇒ false — the dual loader then probes
+ * `widgets.json` at {@link getTransportProbeBase} before falling back to qiankun.
  */
 export function isEsmApp(appName: string): boolean {
     return getAppSignal(appName)?.esm === true
 }
 
-/** Transport verdict for a dev-override base, decided by probing its `widgets.json`. */
+/**
+ * CDN/dev base whose `widgets.json` should be probed before choosing a transport.
+ * - Dev override: always (architecture-ambiguous — RISK-005).
+ * - Released unmarked app with a base: yes (heals sticky false-negative `esm` marks on widgets-only apps).
+ * - Released `esm`-marked app: no (sync ESM path).
+ */
+export function getTransportProbeBase(signal: PlatformApp | undefined): string | undefined {
+    if (!signal?.base) return undefined
+    if (signal.version === 'dev-override') return signal.base
+    if (signal.esm === true) return undefined
+    return signal.base
+}
+
+/** Transport verdict for a probed base (`widgets.json` present ⇒ esm). */
 export type OverrideTransport = 'esm' | 'qiankun'
 
 const overrideTransportCache = new Map<string, OverrideTransport>()
@@ -134,13 +148,14 @@ export function peekOverrideTransport(base: string): OverrideTransport | undefin
 }
 
 /**
- * Decide the transport for a dev-override base by probing its `widgets.json` (RISK-005 mitigation).
+ * Decide the transport for a base by probing its `widgets.json`.
+ * Used for import-map-override bases (RISK-005) and for released apps whose injected `esm` mark is
+ * missing — so a sticky server false-negative cannot force widgets-only apps down the dead qiankun path.
+ *
  * A VALID manifest served ⇒ `esm` (and the fetch is cached, so the ESM path's own resolve reuses it).
  * HTTP error, or 200 with a non-manifest body (Vite's SPA fallback answers unknown paths with
- * 200 + index.html) ⇒ `qiankun` — an old-architecture dev server; the qiankun loader re-applies the
- * same override upstream (`qiankun-overrides` merges the key into the app's entry), so BOTH
- * architectures stay dev-overridable with the one widget. Network failure (server not running) ⇒
- * `esm`, so EsmWidgetHost renders its actionable "start that dev server / clear the override" error.
+ * 200 + index.html) ⇒ `qiankun` — a genuine legacy / old-architecture server. Network failure ⇒
+ * `esm`, so EsmWidgetHost renders an actionable error instead of a bare-CDN 403 from qiankun.
  *
  * @see _docs/frontend/plans/2026-07-02-15-40-plan-shell-dual-loader-esm-and-qiankun.md:160 — RISK-005
  */

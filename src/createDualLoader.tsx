@@ -3,13 +3,13 @@
  *
  * Returns a component with the SAME props as `MfComponentLoader`. For each mount it reads the
  * server-injected signal (`window.__ASMA_PLATFORM__.apps[app.name].esm`): marked ⇒ render the
- * native-ESM `<EsmWidgetHost>`; unmarked / no payload ⇒ render the injected `FallbackLoader`
- * (today's `MfComponentLoader`) unchanged. Two apps can therefore use different transports on the
- * same page, and an app that hasn't shipped ESM widgets is byte-identically the old path.
+ * native-ESM `<EsmWidgetHost>`; unmarked with a known CDN base ⇒ PROBE `widgets.json` before
+ * falling back (heals sticky false-negative `esm` marks — widgets-only apps have no qiankun face);
+ * no base / probe miss ⇒ render the injected `FallbackLoader` (today's `MfComponentLoader`).
  *
- * Dev overrides: an app under an `import-map-override:` key is dispatched by PROBING `widgets.json`
- * at the override base (see `resolveOverrideTransport` — RISK-005), because the same key also
- * overrides the qiankun entry — so overriding works for both old- and new-architecture dev servers.
+ * Dev overrides: an app under an `import-map-override:` key is dispatched by the SAME probe at the
+ * override base (see `resolveOverrideTransport` — RISK-005), because the same key also overrides
+ * the qiankun entry — so overriding works for both old- and new-architecture dev servers.
  *
  * The legacy loader is INJECTED (not imported) so this package keeps ZERO qiankun dependency —
  * it is the package that survives when qiankun is retired.
@@ -41,7 +41,13 @@
 import { createElement, useEffect, useState, type ComponentType, type ReactElement } from 'react'
 
 import { EsmWidgetHost, type DualLoaderProps } from './EsmWidgetHost.js'
-import { getAppSignal, isEsmApp, peekOverrideTransport, resolveOverrideTransport } from './platformSignal.js'
+import {
+    getAppSignal,
+    getTransportProbeBase,
+    isEsmApp,
+    peekOverrideTransport,
+    resolveOverrideTransport,
+} from './platformSignal.js'
 
 export function createDualLoader(
     FallbackLoader: ComponentType<DualLoaderProps>,
@@ -49,27 +55,27 @@ export function createDualLoader(
     return function MfComponent(props: DualLoaderProps): ReactElement {
         const appName = props.app?.name
         const signal = appName ? getAppSignal(appName) : undefined
-        // A dev override is transport-ambiguous — the same localStorage key also drives the qiankun
-        // entry override — so dispatch on the probed widgets.json verdict, not the optimistic `esm`
-        // mark (RISK-005). The probe-verdict cache is the source of truth; state only triggers the
+        // Probe when the transport is ambiguous: import-map-override (RISK-005), OR a released app
+        // whose injected `esm` mark is missing (sticky false-negative — widgets-only apps 403 on
+        // qiankun). The probe-verdict cache is the source of truth; state only triggers the
         // re-render once the (per-base, once-per-page) probe settles.
-        const overrideBase = signal?.version === 'dev-override' ? signal.base : undefined
-        const verdict = overrideBase ? peekOverrideTransport(overrideBase) : undefined
+        const probeBase = getTransportProbeBase(signal)
+        const verdict = probeBase ? peekOverrideTransport(probeBase) : undefined
         const [, rerenderOnProbe] = useState(0)
         useEffect(() => {
-            if (!overrideBase || verdict) return
+            if (!probeBase || verdict) return
             let cancelled = false
-            void resolveOverrideTransport(overrideBase).then(() => {
+            void resolveOverrideTransport(probeBase).then(() => {
                 if (!cancelled) rerenderOnProbe((tick) => tick + 1)
             })
             return () => {
                 cancelled = true
             }
-        }, [overrideBase, verdict])
+        }, [probeBase, verdict])
 
-        if (props.app && overrideBase) {
+        if (props.app && probeBase) {
             if (!verdict) {
-                // Probing (one dev-only localhost round-trip) — render the caller's pending UX meanwhile.
+                // Probing (one widgets.json round-trip) — render the caller's pending UX meanwhile.
                 return createElement(
                     'div',
                     { className: props.className, style: props.style },

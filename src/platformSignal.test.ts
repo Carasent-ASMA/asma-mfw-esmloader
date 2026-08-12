@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
 
-import { clearOverrideTransportCache, disableImportMapOverride, getAppSignal, getInjectedPlatform, isEsmApp, peekOverrideTransport, resolveOverrideTransport } from './platformSignal.ts'
+import { clearOverrideTransportCache, disableImportMapOverride, getAppSignal, getInjectedPlatform, getTransportProbeBase, isEsmApp, peekOverrideTransport, resolveOverrideTransport } from './platformSignal.ts'
 import { clearManifestCache } from './widgetsManifest.ts'
 
 const g = globalThis as { window?: unknown; localStorage?: unknown; fetch?: unknown }
@@ -127,7 +127,39 @@ describe('disableImportMapOverride (the "disable override" escape hatch)', () =>
     })
 })
 
-describe('resolveOverrideTransport (widgets.json probe at a dev-override base — RISK-005)', () => {
+describe('getTransportProbeBase', () => {
+    it('returns undefined when there is no signal / no base', () => {
+        assert.equal(getTransportProbeBase(undefined), undefined)
+        assert.equal(getTransportProbeBase({ version: '1.0.0', base: '' }), undefined)
+    })
+
+    it('probes a released unmarked app (sticky false-negative heal path)', () => {
+        assert.equal(
+            getTransportProbeBase({ version: '0.230.0', base: '/cdn/asma-app-calendar/0.230.0/' }),
+            '/cdn/asma-app-calendar/0.230.0/',
+        )
+    })
+
+    it('does NOT probe a released esm-marked app (sync ESM path)', () => {
+        assert.equal(
+            getTransportProbeBase({
+                version: '0.230.0',
+                base: '/cdn/asma-app-calendar/0.230.0/',
+                esm: true,
+            }),
+            undefined,
+        )
+    })
+
+    it('always probes a dev-override base (architecture-ambiguous)', () => {
+        assert.equal(
+            getTransportProbeBase({ version: 'dev-override', base: 'http://localhost:3001/', esm: true }),
+            'http://localhost:3001/',
+        )
+    })
+})
+
+describe('resolveOverrideTransport (widgets.json probe at a base — override + unmarked heal)', () => {
     const BASE = 'http://localhost:3006/'
 
     it('widgets.json served ⇒ esm', async () => {
