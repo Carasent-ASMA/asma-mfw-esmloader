@@ -159,3 +159,69 @@ export async function resolveOverrideTransport(base: string): Promise<OverrideTr
     overrideTransportCache.set(base, verdict)
     return verdict
 }
+
+/** localStorage key holding a one-shot record of an override this loader healed by itself. */
+const OVERRIDE_SELF_HEAL_KEY = 'asma-override-self-heal'
+
+/**
+ * Is this override base a developer's own machine, rather than a published version?
+ *
+ * The distinction decides whether an unreachable override may be cleared automatically. A dev
+ * server that is merely not running is a temporary, self-inflicted and RECOVERABLE state — the
+ * developer starts it and carries on — so silently discarding their deliberate setting would be
+ * hostile. A published version that has gone (a merged `pr<N>` preview, deleted by ASMA-7863) is
+ * gone for good: nothing the user can do will bring it back, and leaving the override in place
+ * only guarantees the same failure on every subsequent load.
+ */
+export function isLocalOverrideBase(base: string): boolean {
+    try {
+        const { hostname } = new URL(base, 'http://localhost')
+        return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1'
+    } catch {
+        return false
+    }
+}
+
+/** One override this loader disabled on the user's behalf, awaiting a toast from the host app. */
+export interface OverrideSelfHeal {
+    appName: string
+    base: string
+}
+
+/**
+ * Record that a dead override was cleared, so the host app can tell the user WHY the page just
+ * reloaded and what it fell back to. Written before the reload; read once afterwards.
+ */
+export function recordOverrideSelfHeal(appName: string, base: string): void {
+    if (typeof localStorage === 'undefined') return
+    try {
+        localStorage.setItem(OVERRIDE_SELF_HEAL_KEY, JSON.stringify({ appName, base }))
+    } catch {
+        // storage blocked — the heal still happened, only the explanation is lost
+    }
+}
+
+/**
+ * Take the pending self-heal record, if any. Clearing on read is deliberate: the message describes
+ * one reload, and repeating it on every later navigation would be noise.
+ */
+export function consumeOverrideSelfHeal(): OverrideSelfHeal | undefined {
+    if (typeof localStorage === 'undefined') return undefined
+    try {
+        const raw = localStorage.getItem(OVERRIDE_SELF_HEAL_KEY)
+        if (!raw) return undefined
+        localStorage.removeItem(OVERRIDE_SELF_HEAL_KEY)
+        const parsed: unknown = JSON.parse(raw)
+        if (
+            parsed &&
+            typeof parsed === 'object' &&
+            typeof (parsed as OverrideSelfHeal).appName === 'string' &&
+            typeof (parsed as OverrideSelfHeal).base === 'string'
+        ) {
+            return parsed as OverrideSelfHeal
+        }
+        return undefined
+    } catch {
+        return undefined
+    }
+}

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
 
-import { clearOverrideTransportCache, disableImportMapOverride, getAppSignal, getInjectedPlatform, isEsmApp, peekOverrideTransport, resolveOverrideTransport } from './platformSignal.ts'
+import { clearOverrideTransportCache, consumeOverrideSelfHeal, disableImportMapOverride, getAppSignal, getInjectedPlatform, isEsmApp, isLocalOverrideBase, peekOverrideTransport, recordOverrideSelfHeal, resolveOverrideTransport } from './platformSignal.ts'
 import { clearManifestCache } from './widgetsManifest.ts'
 
 const g = globalThis as { window?: unknown; localStorage?: unknown; fetch?: unknown }
@@ -18,6 +18,9 @@ function fakeLocalStorage(items: Record<string, string>): unknown {
         getItem: (k: string) => items[k] ?? null,
         setItem: (k: string, v: string) => {
             items[k] = v
+        },
+        removeItem: (k: string) => {
+            delete items[k]
         },
     }
 }
@@ -167,5 +170,36 @@ describe('resolveOverrideTransport (widgets.json probe at a dev-override base â€
         await resolveOverrideTransport(BASE)
         assert.equal(calls, 1)
         assert.equal(peekOverrideTransport(BASE), 'qiankun')
+    })
+})
+
+describe('override self-heal (ASMA-7866)', () => {
+    it('treats a developer machine as local, whatever the port or protocol', () => {
+        for (const base of ['http://localhost:3003/', 'https://127.0.0.1:8080/', 'http://[::1]:5173/']) {
+            assert.equal(isLocalOverrideBase(base), true, base)
+        }
+    })
+
+    it('treats a published CDN version as NOT local', () => {
+        assert.equal(isLocalOverrideBase('https://web.dev.adopus.no/cdn/asma-app-chat/pr41/'), false)
+    })
+
+    it('does not mistake a hostname that merely contains "localhost" for the real thing', () => {
+        assert.equal(isLocalOverrideBase('https://localhost.evil.example.com/'), false)
+    })
+
+    it('records a heal and hands it over exactly once', () => {
+        g.localStorage = fakeLocalStorage({})
+        recordOverrideSelfHeal('asma-app-chat', 'https://cdn/asma-app-chat/pr41/')
+
+        const first = consumeOverrideSelfHeal()
+        assert.deepEqual(first, { appName: 'asma-app-chat', base: 'https://cdn/asma-app-chat/pr41/' })
+        // Cleared on read: the message describes one reload, not every later navigation.
+        assert.equal(consumeOverrideSelfHeal(), undefined)
+    })
+
+    it('returns nothing when the stored record is corrupt rather than throwing', () => {
+        g.localStorage = fakeLocalStorage({ 'asma-override-self-heal': 'not json' })
+        assert.equal(consumeOverrideSelfHeal(), undefined)
     })
 })

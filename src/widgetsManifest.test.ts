@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, it, mock } from 'node:test'
 
-import { clearManifestCache, fetchManifest, resolveEntry, resolveWidget } from './widgetsManifest.ts'
+import { clearManifestCache, fetchManifest, ManifestFormatError, ManifestHttpError, provesVersionIsGone, resolveEntry, resolveWidget } from './widgetsManifest.ts'
 
 const ABS_BASE = 'https://cdn.example.com/cdn/asma-app-calendar/1.2.3/'
 
@@ -84,5 +84,23 @@ describe('fetchManifest URL', () => {
         }
         await fetchManifest(ABS_BASE, 'https://cdn.example.com/custom/widgets.json')
         assert.equal(requested, 'https://cdn.example.com/custom/widgets.json')
+    })
+})
+
+describe('provesVersionIsGone (ASMA-7866)', () => {
+    it('accepts 404 and 403 — this origin answers 403 for a key that does not exist', () => {
+        assert.equal(provesVersionIsGone(new ManifestHttpError('https://cdn/x/widgets.json', 404)), true)
+        assert.equal(provesVersionIsGone(new ManifestHttpError('https://cdn/x/widgets.json', 403)), true)
+    })
+
+    it('accepts an SPA-fallback body — a vanished prefix returns index.html with HTTP 200', () => {
+        assert.equal(provesVersionIsGone(new ManifestFormatError('https://cdn/x/widgets.json', 'text/html')), true)
+    })
+
+    it('REJECTS unreachability: a 5xx, a timeout and a bare network failure are not proof', () => {
+        assert.equal(provesVersionIsGone(new ManifestHttpError('https://cdn/x/widgets.json', 503)), false)
+        assert.equal(provesVersionIsGone(new ManifestHttpError('https://cdn/x/widgets.json', 500)), false)
+        assert.equal(provesVersionIsGone(new TypeError('Failed to fetch')), false)
+        assert.equal(provesVersionIsGone('some string'), false)
     })
 })
