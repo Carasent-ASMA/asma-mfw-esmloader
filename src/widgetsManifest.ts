@@ -119,3 +119,22 @@ export async function resolveWidget(base: string, componentPath: string, manifes
     }
     return resolveEntry(base, entry)
 }
+
+/**
+ * Does this failure PROVE the version's artifacts are gone, as opposed to merely unreachable?
+ *
+ * Only two answers are proof. A 404, or a 403 — this object store answers 403 for a key that does
+ * not exist when the caller cannot list the bucket, so the two are the same fact here. And a
+ * manifest that parsed as something other than JSON, which is what a vanished prefix looks like
+ * from the client: the request falls through the static server's SPA catch-all and comes back as
+ * index.html with HTTP 200.
+ *
+ * Everything else — a network blip, a timeout, a 5xx — is unreachability, and callers must not act
+ * on it as if the version had been deleted.
+ */
+export function provesVersionIsGone(error: unknown): boolean {
+    if (error instanceof ManifestHttpError) {
+        return error.status === 404 || error.status === 403
+    }
+    return error instanceof ManifestFormatError
+}

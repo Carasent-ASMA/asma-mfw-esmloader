@@ -13,7 +13,13 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactElement } fr
 
 import type { WidgetInstance, WidgetProps } from './contract.js'
 import { loadAndMountEsmWidget } from './loadEsmWidget.js'
-import { disableImportMapOverride, getAppSignal } from './platformSignal.js'
+import {
+    disableImportMapOverride,
+    getAppSignal,
+    isLocalOverrideBase,
+    recordOverrideSelfHeal,
+} from './platformSignal.js'
+import { provesVersionIsGone } from './widgetsManifest.js'
 import type { RegisteredAppName, WidgetPathFor, WidgetPropsFor } from './registry.js'
 import { WidgetErrorNotice } from './WidgetErrorNotice.js'
 
@@ -158,6 +164,27 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
                 const signal = getAppSignal(appName)
                 const rawMessage = loadError instanceof Error ? loadError.message : String(loadError)
                 const isDevOverride = signal?.version === 'dev-override'
+
+                // A dead PUBLISHED override heals itself; a dead LOCALHOST one must not.
+                //
+                // Once a merged `pr<N>` preview is deleted (ASMA-7863) the version is gone for good:
+                // no action by the user can bring it back, and leaving the override in place only
+                // guarantees the same failure on every later load. A dev server that is merely not
+                // running is the opposite — recoverable by starting it — so discarding that setting
+                // silently would be hostile.
+                //
+                // Healing is also limited to failures that PROVE absence, never a transient one: an
+                // HTTP 404/403 (this origin answers 403 for a missing key), or a manifest that came
+                // back as the SPA catch-all's index.html instead of JSON, which is what a vanished
+                // prefix looks like from the client. A network blip or a 5xx leaves the override
+                // alone and simply reports the error.
+                if (isDevOverride && signal && !isLocalOverrideBase(signal.base) && provesVersionIsGone(loadError)) {
+                    recordOverrideSelfHeal(appName, signal.base)
+                    disableImportMapOverride(appName)
+                    window.location.reload()
+                    return
+                }
+
                 setFailedOverrideApp(isDevOverride ? appName : undefined)
                 setError(
                     isDevOverride
