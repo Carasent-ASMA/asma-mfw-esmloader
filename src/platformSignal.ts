@@ -92,6 +92,64 @@ export function disableImportMapOverride(appName: string): void {
 }
 
 /**
+ * The SECOND override channel: `esm-overrides` (ASMA-7866). The server's own head injection reads this
+ * key and rewrites `apps[<name>].base` IN PLACE before the import map is materialized — see
+ * `asma-njs-auth/src/handlers/buildPlatformInjection.ts`. Nothing in the loader applies it, so an app
+ * overridden this way looks exactly like an ordinary platform entry: real `version`, someone else's
+ * `base`. That is precisely why it needs naming — a self-heal keyed on the `dev-override` marker would
+ * skip it, and a self-heal keyed on nothing at all would start clearing bases the SERVER chose, which
+ * is a dangling version pointer (ASMA-7864) that no client action can fix.
+ *
+ * Shape: `{"apps":{"asma-app-chat":"https://…/pr41/"}}`. Undefined if unset, malformed or blocked.
+ */
+export const ESM_OVERRIDES_KEY = 'esm-overrides'
+
+function readEsmOverrides(): Record<string, string> {
+    if (typeof localStorage === 'undefined') return {}
+    try {
+        const parsed: unknown = JSON.parse(localStorage.getItem(ESM_OVERRIDES_KEY) ?? '{}')
+        const apps = (parsed as { apps?: unknown } | null)?.apps
+        return apps && typeof apps === 'object' ? (apps as Record<string, string>) : {}
+    } catch {
+        return {}
+    }
+}
+
+/** Where a base in front of an app came from — `undefined` means the server payload's own. */
+export type OverrideSource = 'import-map' | 'esm-overrides'
+
+/**
+ * Which override, if any, put `base` in front of `appName`.
+ *
+ * The question a self-heal must answer before clearing anything: an override is the user's own
+ * setting and can be withdrawn, whereas a base the server chose is not theirs to withdraw — clearing
+ * it would achieve nothing and the reload would loop. Matched on the base itself rather than on the
+ * `dev-override` marker, because only one of the two channels produces that marker.
+ */
+export function findOverrideSource(appName: string, base: string): OverrideSource | undefined {
+    if (getImportMapOverrideBase(appName) === base) return 'import-map'
+    if (readEsmOverrides()[appName] === base) return 'esm-overrides'
+    return undefined
+}
+
+/** Withdraw whichever override put a base in front of `appName`. Best-effort; never throws. */
+export function clearOverride(appName: string, source: OverrideSource): void {
+    if (source === 'import-map') {
+        disableImportMapOverride(appName)
+        return
+    }
+    if (typeof localStorage === 'undefined') return
+    try {
+        const apps = readEsmOverrides()
+        // Only this app's entry goes — the others are separate, still-valid decisions by the same user.
+        const { [appName]: _removed, ...rest } = apps
+        localStorage.setItem(ESM_OVERRIDES_KEY, JSON.stringify({ apps: rest }))
+    } catch {
+        // storage blocked — best-effort, nothing more to do
+    }
+}
+
+/**
  * The platform entry for one app. An active import-map-override wins (dev): the overridden app is
  * OPTIMISTICALLY treated as native-ESM with `widgets.json` at the override base — so the ESM path is
  * testable in a shell with no injected platform. Otherwise the server-injected `__ASMA_PLATFORM__` entry.

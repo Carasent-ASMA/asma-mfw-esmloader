@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
 
-import { clearOverrideTransportCache, consumeOverrideSelfHeal, disableImportMapOverride, getAppSignal, getInjectedPlatform, isEsmApp, isLocalOverrideBase, peekOverrideTransport, recordOverrideSelfHeal, resolveOverrideTransport } from './platformSignal.ts'
+import { clearOverride, clearOverrideTransportCache, consumeOverrideSelfHeal, disableImportMapOverride, findOverrideSource, getAppSignal, getInjectedPlatform, isEsmApp, isLocalOverrideBase, peekOverrideTransport, recordOverrideSelfHeal, resolveOverrideTransport } from './platformSignal.ts'
 import { clearManifestCache } from './widgetsManifest.ts'
 
 const g = globalThis as { window?: unknown; localStorage?: unknown; fetch?: unknown }
@@ -170,6 +170,63 @@ describe('resolveOverrideTransport (widgets.json probe at a dev-override base �
         await resolveOverrideTransport(BASE)
         assert.equal(calls, 1)
         assert.equal(peekOverrideTransport(BASE), 'qiankun')
+    })
+})
+
+describe('findOverrideSource / clearOverride — the two override channels (ASMA-7866)', () => {
+    const GONE = 'https://web.dev.adopus.no/cdn/asma-app-chat/pr41/'
+
+    it('names the import-map channel', () => {
+        g.localStorage = fakeLocalStorage({ 'import-map-override:asma-app-chat': GONE })
+        assert.equal(findOverrideSource('asma-app-chat', GONE), 'import-map')
+    })
+
+    it('names the esm-overrides channel, which leaves no marker on the platform entry', () => {
+        // The server's head injection rewrites apps[<name>].base in place, so getAppSignal() reports a
+        // real version with someone else's base — nothing distinguishes it but this key.
+        g.localStorage = fakeLocalStorage({ 'esm-overrides': JSON.stringify({ apps: { 'asma-app-chat': GONE } }) })
+        assert.equal(findOverrideSource('asma-app-chat', GONE), 'esm-overrides')
+    })
+
+    it('reports NO source for a base the server itself chose — a dangling pointer is not ours to clear', () => {
+        g.localStorage = fakeLocalStorage({})
+        assert.equal(findOverrideSource('asma-app-chat', '/cdn/asma-app-chat/1.4.2/'), undefined)
+    })
+
+    it('reports no source when an override exists but points somewhere else', () => {
+        g.localStorage = fakeLocalStorage({ 'import-map-override:asma-app-chat': 'http://localhost:3002/' })
+        assert.equal(findOverrideSource('asma-app-chat', GONE), undefined)
+    })
+
+    it('ignores a disabled import-map override — it is not what is in front of the app', () => {
+        g.localStorage = fakeLocalStorage({
+            'import-map-override:asma-app-chat': GONE,
+            'import-map-overrides-disabled': '["asma-app-chat"]',
+        })
+        assert.equal(findOverrideSource('asma-app-chat', GONE), undefined)
+    })
+
+    it('survives a malformed esm-overrides blob rather than throwing', () => {
+        g.localStorage = fakeLocalStorage({ 'esm-overrides': 'not json{' })
+        assert.equal(findOverrideSource('asma-app-chat', GONE), undefined)
+    })
+
+    it('clears only the named app from esm-overrides, leaving the others intact', () => {
+        const store: Record<string, string> = {
+            'esm-overrides': JSON.stringify({ apps: { 'asma-app-chat': GONE, 'asma-app-calendar': 'http://x/' } }),
+        }
+        g.localStorage = fakeLocalStorage(store)
+        clearOverride('asma-app-chat', 'esm-overrides')
+        assert.deepEqual(JSON.parse(store['esm-overrides']!), { apps: { 'asma-app-calendar': 'http://x/' } })
+    })
+
+    it('clears an import-map override through the widget disabled list, not by deleting the key', () => {
+        // Deleting the key would lose what the tester typed; the widget's own list is reversible.
+        const store: Record<string, string> = { 'import-map-override:asma-app-chat': GONE }
+        g.localStorage = fakeLocalStorage(store)
+        clearOverride('asma-app-chat', 'import-map')
+        assert.equal(store['import-map-override:asma-app-chat'], GONE)
+        assert.deepEqual(JSON.parse(store['import-map-overrides-disabled']!), ['asma-app-chat'])
     })
 })
 
