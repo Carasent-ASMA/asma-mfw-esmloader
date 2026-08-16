@@ -14,10 +14,12 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactElement } fr
 import type { WidgetInstance, WidgetProps } from './contract.js'
 import { loadAndMountEsmWidget } from './loadEsmWidget.js'
 import {
-    disableImportMapOverride,
+    clearOverride,
+    findOverrideSource,
     getAppSignal,
     isLocalOverrideBase,
     recordOverrideSelfHeal,
+    type OverrideSource,
 } from './platformSignal.js'
 import { provesVersionIsGone } from './widgetsManifest.js'
 import type { RegisteredAppName, WidgetPathFor, WidgetPropsFor } from './registry.js'
@@ -114,8 +116,9 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
     const instanceRef = useRef<WidgetInstance<typeof mountProps> | null>(null)
     const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
     const [error, setError] = useState<string>()
-    // Set to the app name only when the failure was a dev override; drives the "disable override" button.
-    const [failedOverrideApp, setFailedOverrideApp] = useState<string>()
+    // Set only when the failure was an override the user can withdraw; drives the "disable override"
+    // button, which has to know WHICH channel to withdraw it from.
+    const [failedOverride, setFailedOverride] = useState<{ appName: string; source: OverrideSource }>()
 
     // `app` is either the bare name (direct ESM use) or the { name, entry } object (dual-loader forward).
     const appName = typeof app === 'string' ? app : app?.name
@@ -158,12 +161,15 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
             .catch((loadError: unknown) => {
                 if (cancelled) return
                 console.error(`EsmWidgetHost failed for ${appName}#${componentPath}`, loadError)
-                // A `dev-override` signal means the base came from the import-map-overrides widget, not
-                // the platform. The usual failure then is "override points at a dev server that isn't
-                // running" — say so, and how to fix it, instead of a bare "Failed to fetch".
+                // An overridden base means the failure is most likely "the override points at a dev
+                // server that isn't running" — say so, and how to fix it, instead of "Failed to fetch".
                 const signal = getAppSignal(appName)
                 const rawMessage = loadError instanceof Error ? loadError.message : String(loadError)
-                const isDevOverride = signal?.version === 'dev-override'
+                // Which channel put this base in front of the app, if any. Not the `dev-override`
+                // marker: only the import-map channel produces it, while `esm-overrides` is applied by
+                // the server's head injection and leaves an entry indistinguishable from an ordinary
+                // one. A base with no source behind it is the SERVER's choice and not ours to withdraw.
+                const overrideSource = signal ? findOverrideSource(appName, signal.base) : undefined
 
                 // A dead PUBLISHED override heals itself; a dead LOCALHOST one must not.
                 //
@@ -178,16 +184,16 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
                 // back as the SPA catch-all's index.html instead of JSON, which is what a vanished
                 // prefix looks like from the client. A network blip or a 5xx leaves the override
                 // alone and simply reports the error.
-                if (isDevOverride && signal && !isLocalOverrideBase(signal.base) && provesVersionIsGone(loadError)) {
+                if (overrideSource && signal && !isLocalOverrideBase(signal.base) && provesVersionIsGone(loadError)) {
                     recordOverrideSelfHeal(appName, signal.base)
-                    disableImportMapOverride(appName)
+                    clearOverride(appName, overrideSource)
                     window.location.reload()
                     return
                 }
 
-                setFailedOverrideApp(isDevOverride ? appName : undefined)
+                setFailedOverride(overrideSource ? { appName, source: overrideSource } : undefined)
                 setError(
-                    isDevOverride
+                    overrideSource && signal
                         ? `"${appName}" is served from a dev override at ${signal.base}, which is unreachable ` +
                           `(${rawMessage}). Start that dev server, or click "disable override" below to temporarily ` +
                           `disable this app in the import-map-overrides widget and reload automatically.`
@@ -229,9 +235,9 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
                     widgetName={componentPath}
                     widgetProps={mountProps}
                     onDisableOverride={
-                        failedOverrideApp
+                        failedOverride
                             ? () => {
-                                  disableImportMapOverride(failedOverrideApp)
+                                  clearOverride(failedOverride.appName, failedOverride.source)
                                   window.location.reload()
                               }
                             : undefined

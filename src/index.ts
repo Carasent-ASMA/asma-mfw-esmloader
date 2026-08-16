@@ -31,11 +31,14 @@ export {
 } from './EsmWidgetHost.js'
 export { loadAndMountEsmWidget } from './loadEsmWidget.js'
 export {
+    ESM_OVERRIDES_KEY,
     IMPORT_MAP_OVERRIDE_PREFIX,
     IMPORT_MAP_OVERRIDES_DISABLED_KEY,
+    clearOverride,
     clearOverrideTransportCache,
     consumeOverrideSelfHeal,
     disableImportMapOverride,
+    findOverrideSource,
     getAppSignal,
     getInjectedPlatform,
     isEsmApp,
@@ -45,6 +48,7 @@ export {
     resolveOverrideTransport,
     type InjectedPlatform,
     type OverrideSelfHeal,
+    type OverrideSource,
     type OverrideTransport,
     type PlatformApp,
 } from './platformSignal.js'
