@@ -34,16 +34,28 @@ export {
     IMPORT_MAP_OVERRIDE_PREFIX,
     IMPORT_MAP_OVERRIDES_DISABLED_KEY,
     clearOverrideTransportCache,
+    consumeOverrideSelfHeal,
     disableImportMapOverride,
     getAppSignal,
     getInjectedPlatform,
     isEsmApp,
+    isLocalOverrideBase,
     peekOverrideTransport,
+    recordOverrideSelfHeal,
     resolveOverrideTransport,
     type InjectedPlatform,
+    type OverrideSelfHeal,
     type OverrideTransport,
     type PlatformApp,
 } from './platformSignal.js'
+// The host half of the self-heal (ASMA-7866): a host shows the notice, this package decides what it
+// says. `useOverrideSelfHealNotice` is what shell/advoca/layouts call; the other two are for hosts
+// that already own their own mount effect.
+export {
+    describeOverrideSelfHeal,
+    notifyOverrideSelfHeal,
+    useOverrideSelfHealNotice,
+} from './overrideSelfHealNotice.js'
 export {
     ManifestFormatError,
     ManifestHttpError,
