@@ -2,16 +2,23 @@ import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
 
 import { describeOverrideSelfHeal, notifyOverrideSelfHeal } from './overrideSelfHealNotice.ts'
+import { clearDeadOverrides, takeStartupClears } from './validateOverrides.ts'
 import { recordOverrideSelfHeal } from './platformSignal.ts'
 
 const g = globalThis as { window?: unknown; localStorage?: unknown }
 afterEach(() => {
     delete g.window
     delete g.localStorage
+    takeStartupClears() // module state — must not leak into the next case
 })
 
 function fakeLocalStorage(items: Record<string, string>): unknown {
     return {
+        // Enumerable: the startup check discovers which apps are overridden rather than being told.
+        get length() {
+            return Object.keys(items).length
+        },
+        key: (index: number) => Object.keys(items)[index] ?? null,
         getItem: (k: string) => items[k] ?? null,
         setItem: (k: string, v: string) => {
             items[k] = v
@@ -74,6 +81,31 @@ describe('notifyOverrideSelfHeal (ASMA-7866)', () => {
         )
         assert.equal(shown.length, 1)
         assert.match(shown[0]!, /asma-app-chat.*pr41.*1\.4\.2/)
+    })
+
+    it('reports what the STARTUP check cleared, which never went through storage', () => {
+        // DEC-F2: the startup check clears before the first render, so its result is handed over in
+        // memory — nothing has to survive a page load, and several apps can be in it at once.
+        g.localStorage = fakeLocalStorage({
+            'import-map-override:asma-app-chat': 'https://cdn/asma-app-chat/pr41/',
+            'import-map-override:asma-app-crm': 'https://cdn/asma-app-crm/pr9/',
+        })
+        return clearDeadOverrides({
+            fetchImpl: (() => Promise.resolve({ status: 403 } as Response)) as unknown as typeof fetch,
+        }).then(() => {
+            const shown: string[] = []
+            assert.equal(
+                notifyOverrideSelfHeal((m) => shown.push(m)),
+                true,
+            )
+            assert.equal(shown.length, 2, 'both cleared overrides must be named, not just the last')
+            // ...and only once.
+            assert.equal(
+                notifyOverrideSelfHeal((m) => shown.push(m)),
+                false,
+            )
+            assert.equal(shown.length, 2)
+        })
     })
 
     it('hands the raw record to the host alongside the message', () => {

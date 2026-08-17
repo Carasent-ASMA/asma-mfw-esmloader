@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
 
-import { clearDeadOverrides } from './validateOverrides.ts'
+import { clearDeadOverrides, takeStartupClears } from './validateOverrides.ts'
 
 const g = globalThis as { window?: unknown; localStorage?: unknown }
 afterEach(() => {
     delete g.window
     delete g.localStorage
+    takeStartupClears() // module state — must not leak into the next case
 })
 
 /** A localStorage fake that can be ENUMERATED — the startup check discovers apps, not the reverse. */
