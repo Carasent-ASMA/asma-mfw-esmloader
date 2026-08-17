@@ -132,6 +132,48 @@ export function findOverrideSource(appName: string, base: string): OverrideSourc
     return undefined
 }
 
+/** One override currently in force, whichever channel put it there. */
+export interface ActiveOverride {
+    appName: string
+    base: string
+    source: OverrideSource
+}
+
+/**
+ * Every override in force right now, across both channels.
+ *
+ * Needed because the startup check (DEC-F2) has to ask "what is overridden?" without knowing the
+ * app names in advance — unlike the per-widget path, which always starts from an app it is about
+ * to mount. Import-map keys are enumerated from storage; a disabled one is not in force and is
+ * therefore not listed.
+ */
+export function listActiveOverrides(): ActiveOverride[] {
+    if (typeof localStorage === 'undefined') return []
+
+    const overrides: ActiveOverride[] = []
+    try {
+        for (let index = 0; index < localStorage.length; index++) {
+            const key = localStorage.key(index)
+            if (!key?.startsWith(IMPORT_MAP_OVERRIDE_PREFIX)) continue
+            const appName = key.slice(IMPORT_MAP_OVERRIDE_PREFIX.length)
+            const base = getImportMapOverrideBase(appName)
+            if (base) overrides.push({ appName, base, source: 'import-map' })
+        }
+    } catch {
+        // storage blocked or non-enumerable — fall through to the other channel
+    }
+
+    const seen = new Set(overrides.map((override) => override.appName))
+    for (const [appName, base] of Object.entries(readEsmOverrides())) {
+        // The import-map channel wins in `getAppSignal`, so it wins here too — otherwise the same
+        // app would be probed twice and cleared through the wrong channel.
+        if (typeof base === 'string' && base && !seen.has(appName)) {
+            overrides.push({ appName, base, source: 'esm-overrides' })
+        }
+    }
+    return overrides
+}
+
 /** Withdraw whichever override put a base in front of `appName`. Best-effort; never throws. */
 export function clearOverride(appName: string, source: OverrideSource): void {
     if (source === 'import-map') {
