@@ -43,9 +43,11 @@ export {
     getInjectedPlatform,
     isEsmApp,
     isLocalOverrideBase,
+    listActiveOverrides,
     peekOverrideTransport,
     recordOverrideSelfHeal,
     resolveOverrideTransport,
+    type ActiveOverride,
     type InjectedPlatform,
     type OverrideSelfHeal,
     type OverrideSource,
@@ -60,6 +62,13 @@ export {
     notifyOverrideSelfHeal,
     useOverrideSelfHealNotice,
 } from './overrideSelfHealNotice.js'
+// The startup half (DEC-F2): a host awaits this before its first render, so a dead override never
+// gets far enough to need a reload. Returns what it cleared, for the host to surface.
+export {
+    clearDeadOverrides,
+    OVERRIDE_PROBE_TIMEOUT_MS,
+    type ValidateOverridesOptions,
+} from './validateOverrides.js'
 export {
     ManifestFormatError,
     ManifestHttpError,
