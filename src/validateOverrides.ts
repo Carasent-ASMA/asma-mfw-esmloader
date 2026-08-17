@@ -27,6 +27,23 @@ import { clearOverride, isLocalOverrideBase, listActiveOverrides, type ActiveOve
  */
 export const OVERRIDE_PROBE_TIMEOUT_MS = 2000
 
+/**
+ * What the startup check cleared, waiting for the host to say so.
+ *
+ * An in-memory handoff rather than the localStorage record, for two reasons: nothing here has to
+ * survive a page load (the clearing and the message happen within one), and the record holds a
+ * single entry, so several previews dying together would lose all but the last. Held here because
+ * the clearing happens before the first render and the message can only be shown after it.
+ */
+let pendingStartupClears: ActiveOverride[] = []
+
+/** Take what the startup check cleared. Empties on read — one message per app, per load. */
+export function takeStartupClears(): ActiveOverride[] {
+    const pending = pendingStartupClears
+    pendingStartupClears = []
+    return pending
+}
+
 /** Statuses that PROVE the version is gone, rather than merely out of reach. */
 function provesBaseIsGone(status: number): boolean {
     return status === 404 || status === 403
@@ -79,10 +96,10 @@ export async function clearDeadOverrides(options: ValidateOverridesOptions = {})
         for (const override of cleared) {
             clearOverride(override.appName, override.source)
         }
-        // Deliberately NOT written to the one-shot self-heal record. That record exists to carry a
-        // message ACROSS a reload, and there is no reload here — the caller is holding the list.
-        // It also holds one entry, so several previews dying at once would silently lose all but
-        // the last; returning them keeps every one.
+        // Handed to the host two ways, because it needs both: returned for a caller that wants to
+        // act on it immediately, and parked for `notifyOverrideSelfHeal` to drain after the first
+        // render — the message can only be shown once there is something to show it in.
+        pendingStartupClears = [...pendingStartupClears, ...cleared]
         return cleared
     } finally {
         clearTimeout(timeout)

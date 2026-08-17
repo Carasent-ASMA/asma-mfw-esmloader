@@ -14,6 +14,7 @@
 import { useEffect } from 'react'
 
 import { consumeOverrideSelfHeal, getAppSignal, type OverrideSelfHeal } from './platformSignal.js'
+import { takeStartupClears } from './validateOverrides.js'
 
 /**
  * The sentence a host shows. It names all three things the tester needs to reconcile what they are
@@ -35,10 +36,23 @@ export function describeOverrideSelfHeal({ appName, base }: OverrideSelfHeal): s
  * which is what makes this correct under React's double-invoked effects.
  */
 export function notifyOverrideSelfHeal(notify: (message: string, heal: OverrideSelfHeal) => void): boolean {
+    let reported = false
+
+    // Two sources, because a heal can happen at two moments. The startup check (DEC-F2) clears
+    // before the first render and parks what it cleared in memory — possibly several apps at once.
+    // The per-widget path clears mid-session and reloads, so its single record has to survive the
+    // load in storage. Both end up as the same sentence.
+    for (const cleared of takeStartupClears()) {
+        notify(describeOverrideSelfHeal(cleared), cleared)
+        reported = true
+    }
+
     const heal = consumeOverrideSelfHeal()
-    if (!heal) return false
-    notify(describeOverrideSelfHeal(heal), heal)
-    return true
+    if (heal) {
+        notify(describeOverrideSelfHeal(heal), heal)
+        reported = true
+    }
+    return reported
 }
 
 /**
