@@ -40,8 +40,17 @@
  */
 import { createElement, useEffect, useState, type ComponentType, type ReactElement } from 'react'
 
+import { describeWidgetLoadFailure } from './describeLoadFailure.js'
 import { EsmWidgetHost, type DualLoaderProps } from './EsmWidgetHost.js'
-import { getAppSignal, isEsmApp, peekOverrideTransport, resolveOverrideTransport } from './platformSignal.js'
+import {
+    clearOverride,
+    findOverrideSource,
+    getAppSignal,
+    isEsmApp,
+    peekOverrideTransport,
+    resolveOverrideTransport,
+} from './platformSignal.js'
+import { WidgetErrorNotice } from './WidgetErrorNotice.js'
 
 export function createDualLoader(
     FallbackLoader: ComponentType<DualLoaderProps>,
@@ -56,6 +65,11 @@ export function createDualLoader(
         const overrideBase = signal?.version === 'dev-override' ? signal.base : undefined
         const verdict = overrideBase ? peekOverrideTransport(overrideBase) : undefined
         const [, rerenderOnProbe] = useState(0)
+        // ASMA-7853 — the qiankun branch's error state. `EsmWidgetHost` has always rendered a notice
+        // for a failed load; the fallback could not, because a qiankun widget mounts imperatively
+        // outside React and its failure reached only `console.error`. `MfComponentLoader` now hands
+        // it here through `onLoadError`, so both branches fail the same way on screen.
+        const [fallbackError, setFallbackError] = useState<unknown>()
         useEffect(() => {
             if (!overrideBase || verdict) return
             let cancelled = false
@@ -67,6 +81,42 @@ export function createDualLoader(
             }
         }, [overrideBase, verdict])
 
+        // The qiankun branch, with its failure made visible. The notice REPLACES the fallback rather
+        // than sitting beside it: `MfComponentLoader` has no wrapper of its own — its container div
+        // IS the slot the host laid out — so a sibling would add a second box to every failed
+        // widget's parent. A dead widget has nothing left to keep mounted.
+        const renderFallback = (): ReactElement => {
+            if (fallbackError === undefined) {
+                return createElement(FallbackLoader, {
+                    ...props,
+                    onLoadError: (error: unknown) => {
+                        setFallbackError(error)
+                        props.onLoadError?.(error)
+                    },
+                })
+            }
+            // Which channel, if any, put this base in front of the app — the same question the ESM
+            // host asks, and the reason the notice can offer to withdraw the override.
+            const overrideSource = appName && signal ? findOverrideSource(appName, signal.base) : undefined
+            return createElement(WidgetErrorNotice, {
+                message: describeWidgetLoadFailure({
+                    appName,
+                    error: fallbackError,
+                    overrideBase: overrideSource && signal ? signal.base : undefined,
+                }),
+                appName,
+                widgetName: props.props?.component_path,
+                widgetProps: props.props as Record<string, unknown>,
+                onDisableOverride:
+                    overrideSource && appName
+                        ? () => {
+                              clearOverride(appName, overrideSource)
+                              window.location.reload()
+                          }
+                        : undefined,
+            })
+        }
+
         if (props.app && overrideBase) {
             if (!verdict) {
                 // Probing (one dev-only localhost round-trip) — render the caller's pending UX meanwhile.
@@ -76,11 +126,11 @@ export function createDualLoader(
                     props.LoaderComponent ? createElement(props.LoaderComponent) : (props.placeholder ?? null),
                 )
             }
-            return verdict === 'esm' ? createElement(EsmWidgetHost, props) : createElement(FallbackLoader, props)
+            return verdict === 'esm' ? createElement(EsmWidgetHost, props) : renderFallback()
         }
         if (props.app && isEsmApp(props.app.name)) {
             return createElement(EsmWidgetHost, props)
         }
-        return createElement(FallbackLoader, props)
+        return renderFallback()
     }
 }

@@ -30,6 +30,11 @@ export {
     type WidgetEntry,
 } from './EsmWidgetHost.js'
 export { loadAndMountEsmWidget } from './loadEsmWidget.js'
+// The shared error state for a failed widget — exported because it is no longer only EsmWidgetHost's
+// (ASMA-7853): `createDualLoader` renders it for a failed qiankun mount, and `WidgetRenderBoundary`
+// renders it for a widget that throws while rendering, so all three failures look alike.
+export { WidgetErrorNotice, type WidgetErrorNoticeProps } from './WidgetErrorNotice.js'
+export { WidgetRenderBoundary, type WidgetRenderBoundaryProps } from './WidgetRenderBoundary.js'
 export {
     ESM_OVERRIDES_KEY,
     IMPORT_MAP_OVERRIDE_PREFIX,
