@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 
 import type { WidgetInstance, WidgetProps } from './contract.js'
+import { describeWidgetLoadFailure } from './describeLoadFailure.js'
 import { loadAndMountEsmWidget } from './loadEsmWidget.js'
 import {
     clearOverride,
@@ -59,6 +60,13 @@ export interface DualLoaderProps<A extends string = string, P extends WidgetPath
     LoaderComponent?: () => ReactElement
     controller?: AbortController
     onMounted?: () => void
+    /**
+     * Called once if the widget fails to load or mount (ASMA-7853) — the mirror of `onMounted`, and
+     * the same prop `IMfComponentLoader` now carries, so the dual loader can hand one handler to
+     * either transport. On the qiankun side it is the ONLY route out: that widget mounts outside the
+     * host's render tree, where no error boundary can reach it.
+     */
+    onLoadError?: (error: unknown) => void
     style?: CSSProperties
 }
 
@@ -94,6 +102,8 @@ export interface EsmWidgetHostProps<A extends string = RegisteredAppName, P exte
     LoaderComponent?: () => ReactElement
     controller?: AbortController
     onMounted?: () => void
+    /** Called once if the widget fails to load or mount — see {@link DualLoaderProps.onLoadError}. */
+    onLoadError?: (error: unknown) => void
     style?: CSSProperties
 }
 
@@ -106,6 +116,7 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
     disableWrapperStyles,
     LoaderComponent,
     onMounted,
+    onLoadError,
     style,
 }: EsmWidgetHostProps<A, P>): ReactElement {
     const containerRef = useRef<HTMLDivElement>(null)
@@ -164,7 +175,6 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
                 // An overridden base means the failure is most likely "the override points at a dev
                 // server that isn't running" — say so, and how to fix it, instead of "Failed to fetch".
                 const signal = getAppSignal(appName)
-                const rawMessage = loadError instanceof Error ? loadError.message : String(loadError)
                 // Which channel put this base in front of the app, if any. Not the `dev-override`
                 // marker: only the import-map channel produces it, while `esm-overrides` is applied by
                 // the server's head injection and leaves an entry indistinguishable from an ordinary
@@ -193,13 +203,14 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
 
                 setFailedOverride(overrideSource ? { appName, source: overrideSource } : undefined)
                 setError(
-                    overrideSource && signal
-                        ? `"${appName}" is served from a dev override at ${signal.base}, which is unreachable ` +
-                          `(${rawMessage}). Start that dev server, or click "disable override" below to temporarily ` +
-                          `disable this app in the import-map-overrides widget and reload automatically.`
-                        : rawMessage,
+                    describeWidgetLoadFailure({
+                        appName,
+                        error: loadError,
+                        overrideBase: overrideSource && signal ? signal.base : undefined,
+                    }),
                 )
                 setState('error')
+                onLoadError?.(loadError)
             })
 
         return () => {
@@ -207,6 +218,8 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
             instanceRef.current?.unmount()
             instanceRef.current = null
         }
+        // `onLoadError` is deliberately absent from the deps: it is a notification, and re-running
+        // the whole load because a host passed a new inline arrow would remount the widget.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [appName, componentPath])
 

@@ -14,6 +14,8 @@
 import { createElement, type ComponentType } from 'react'
 import { createRoot } from 'react-dom/client'
 
+import { WidgetRenderBoundary } from './WidgetRenderBoundary.js'
+
 export type WidgetProps = Record<string, unknown>
 
 export interface WidgetInstance<P = WidgetProps> {
@@ -28,12 +30,27 @@ export interface WidgetModule<P = WidgetProps> {
 /**
  * Wrap a React component as a widget module. A widget entry file's default/`mount` export is
  * `defineReactWidget(MyWidget)` — the app's widget build (vite.config.widgets.ts) generates these.
+ *
+ * The widget is rendered under a {@link WidgetRenderBoundary}, so a throw during its render shows a
+ * notice in its slot instead of taking the root down silently (ASMA-7853). This is the ONLY place
+ * that boundary can live: the root created here owns the widget's tree, so no boundary in the host
+ * — under either transport — can see what the widget throws.
  */
 export function defineReactWidget<P extends object>(Component: ComponentType<P>): WidgetModule<P> {
     return {
         mount(container, props) {
             const root = createRoot(container)
-            const render = (p: P) => root.render(createElement(Component, p))
+            // Each render is a new attempt, which is what lets the boundary clear a previous error
+            // when the host sends fresh props rather than leaving the widget dead for the page.
+            let attempt = 0
+            const render = (p: P) =>
+                root.render(
+                    createElement(
+                        WidgetRenderBoundary,
+                        { attempt: attempt++, widgetProps: p as Record<string, unknown> },
+                        createElement(Component, p),
+                    ),
+                )
             render(props)
             return { update: render, unmount: () => root.unmount() }
         },
