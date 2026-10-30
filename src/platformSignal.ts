@@ -287,8 +287,10 @@ export function isLocalOverrideBase(base: string): boolean {
  * when it cannot be resolved: malformed, or relative with no page around it.
  */
 export function resolveOverrideBase(base: string): URL | undefined {
+    // An opaque origin (sandboxed iframe, file://) reads as "null", which is no base to resolve against.
+    const origin = typeof location === 'undefined' || location.origin === 'null' ? undefined : location.origin
     try {
-        return new URL(base, typeof location === 'undefined' ? undefined : location.origin)
+        return new URL(base, origin)
     } catch {
         return undefined
     }

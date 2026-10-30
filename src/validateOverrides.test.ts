@@ -168,6 +168,20 @@ describe('clearDeadOverrides — the startup check (ASMA-7866 DEC-F2)', () => {
         ])
     })
 
+    it('hands the host every clear, even from several checks before it drains them', async () => {
+        const second = `${DEV}/cdn/asma-app-crm/pr9/`
+        const store: Record<string, string> = { 'import-map-override:asma-app-chat': DELETED }
+        g.localStorage = fakeLocalStorage(store)
+        await clearDeadOverrides({ fetchImpl: fetchByUrl({ [DELETED]: 403, [`${DELETED}widgets.json`]: 403 }).impl })
+        store['import-map-override:asma-app-crm'] = second
+        await clearDeadOverrides({ fetchImpl: fetchByUrl({ [second]: 404, [`${second}widgets.json`]: 404 }).impl })
+
+        assert.deepEqual(
+            takeStartupClears().map((c) => c.appName),
+            ['asma-app-chat', 'asma-app-crm'],
+        )
+    })
+
     it('ignores an already-disabled override — it is not in force, so it is not ours to judge', async () => {
         const store: Record<string, string> = {
             'import-map-override:asma-app-chat': GONE,
@@ -199,6 +213,7 @@ describe('clearDeadOverrides — the startup check (ASMA-7866 DEC-F2)', () => {
         const { impl } = fetchByUrl({ [ESM_ONLY]: 403, [`${ESM_ONLY}widgets.json`]: 200 })
 
         assert.deepEqual(await clearDeadOverrides({ fetchImpl: impl }), [])
+        assert.deepEqual(takeStartupClears(), [], 'nothing for the host to announce')
     })
 
     it('keeps a live qiankun version — it publishes an entry document and no widgets.json', async () => {
@@ -227,6 +242,8 @@ describe('clearDeadOverrides — the startup check (ASMA-7866 DEC-F2)', () => {
             ['entry 5xx', { [DELETED]: 500, [`${DELETED}widgets.json`]: 403 }],
             ['manifest network failure', { [DELETED]: 403 }],
             ['entry network failure', { [`${DELETED}widgets.json`]: 404 }],
+            ['both 401', { [DELETED]: 401, [`${DELETED}widgets.json`]: 401 }],
+            ['both 429', { [DELETED]: 429, [`${DELETED}widgets.json`]: 429 }],
         ]
         for (const [label, statuses] of unproven) {
             const store: Record<string, string> = { 'import-map-override:asma-app-chat': DELETED }
@@ -343,20 +360,44 @@ describe('confirmOverrideIsGone — the mid-session heal asks the same question 
     const manifest403 = (base: string) => new ManifestHttpError(`${base}widgets.json`, 403)
 
     it('does not take a missing manifest as proof — a live qiankun version has none either', async () => {
-        const { impl } = fetchByUrl({ [QIANKUN_ONLY]: 200, [`${QIANKUN_ONLY}widgets.json`]: 403 })
+        const { impl, urls } = fetchByUrl({ [QIANKUN_ONLY]: 200, [`${QIANKUN_ONLY}widgets.json`]: 403 })
         assert.equal(await confirmOverrideIsGone(QIANKUN_ONLY, manifest403(QIANKUN_ONLY), { fetchImpl: impl }), false)
+        assert.deepEqual(urls(), [QIANKUN_ONLY, `${QIANKUN_ONLY}widgets.json`])
+    })
+
+    it('gives up on the deadline — a widget must not wait forever for the answer', async () => {
+        const silent = ((_url: string, init?: { signal?: AbortSignal }) =>
+            new Promise((_resolve, reject) => {
+                init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+            })) as unknown as typeof fetch
+        const started = Date.now()
+        assert.equal(await confirmOverrideIsGone(DELETED, manifest403(DELETED), { fetchImpl: silent, timeoutMs: 30 }), false)
+        assert.ok(Date.now() - started < 1000)
+    })
+
+    it('says "not proven" where there is no fetch at all', async () => {
+        const g2 = globalThis as { fetch?: unknown }
+        const original = g2.fetch
+        delete g2.fetch
+        try {
+            assert.equal(await confirmOverrideIsGone(DELETED, manifest403(DELETED)), false)
+        } finally {
+            g2.fetch = original
+        }
     })
 
     it('confirms a version whose entry document and manifest are both gone', async () => {
-        const { impl } = fetchByUrl({ [DELETED]: 403, [`${DELETED}widgets.json`]: 403 })
+        const { impl, urls } = fetchByUrl({ [DELETED]: 403, [`${DELETED}widgets.json`]: 403 })
         assert.equal(await confirmOverrideIsGone(DELETED, manifest403(DELETED), { fetchImpl: impl }), true)
+        assert.deepEqual(urls(), [DELETED, `${DELETED}widgets.json`])
     })
 
     it('confirms a dead RELATIVE override against the page origin', async () => {
         onPage(DEV)
-        const { impl } = fetchByUrl({ [DELETED]: 404, [`${DELETED}widgets.json`]: 403 })
+        const { impl, urls } = fetchByUrl({ [DELETED]: 404, [`${DELETED}widgets.json`]: 403 })
         const base = '/cdn/asma-app-chat/pr99999/'
         assert.equal(await confirmOverrideIsGone(base, manifest403(base), { fetchImpl: impl }), true)
+        assert.deepEqual(urls(), [DELETED, `${DELETED}widgets.json`])
     })
 
     it('does not even ask when the failure itself is no proof — a network blip or a 5xx', async () => {

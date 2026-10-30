@@ -259,6 +259,11 @@ describe('override self-heal (ASMA-7866)', () => {
     it('does not call a relative base local when there is no page to resolve it against', () => {
         assert.equal(isLocalOverrideBase('/cdn/asma-app-chat/pr166/'), false)
         assert.equal(isLocalOverrideBase('http://localhost:3003/'), true, 'an absolute base needs no page')
+
+        // An opaque origin (sandboxed iframe, file://) reads as the string "null" — no base at all.
+        g.location = { origin: 'null' }
+        assert.equal(isLocalOverrideBase('/cdn/asma-app-chat/pr166/'), false)
+        assert.equal(isLocalOverrideBase('http://localhost:3003/'), true)
     })
 
     it('records a heal and hands it over exactly once', () => {
