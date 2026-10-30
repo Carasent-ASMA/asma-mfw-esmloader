@@ -18,12 +18,11 @@ import {
     clearOverride,
     findOverrideSource,
     getAppSignal,
-    isLocalOverrideBase,
     recordOverrideSelfHeal,
     type OverrideSource,
 } from './platformSignal.js'
-import { provesVersionIsGone } from './widgetsManifest.js'
 import type { RegisteredAppName, WidgetPathFor, WidgetPropsFor } from './registry.js'
+import { confirmOverrideIsGone } from './validateOverrides.js'
 import { WidgetErrorNotice } from './WidgetErrorNotice.js'
 
 /**
@@ -169,7 +168,7 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
                 setState('ready')
                 onMounted?.()
             })
-            .catch((loadError: unknown) => {
+            .catch(async (loadError: unknown) => {
                 if (cancelled) return
                 console.error(`EsmWidgetHost failed for ${appName}#${componentPath}`, loadError)
                 // An overridden base means the failure is most likely "the override points at a dev
@@ -194,12 +193,18 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
                 // back as the SPA catch-all's index.html instead of JSON, which is what a vanished
                 // prefix looks like from the client. A network blip or a 5xx leaves the override
                 // alone and simply reports the error.
-                if (overrideSource && signal && !isLocalOverrideBase(signal.base) && provesVersionIsGone(loadError)) {
+                //
+                // Even proof-shaped, the failure is only the reason to ask (ASMA-8735): a missing
+                // manifest is also what a LIVE qiankun version answers. The version is gone only
+                // when its entry document and its widgets.json both are — the startup check's rule.
+                if (overrideSource && signal && (await confirmOverrideIsGone(signal.base, loadError))) {
+                    if (cancelled) return
                     recordOverrideSelfHeal(appName, signal.base)
                     clearOverride(appName, overrideSource)
                     window.location.reload()
                     return
                 }
+                if (cancelled) return
 
                 setFailedOverride(overrideSource ? { appName, source: overrideSource } : undefined)
                 setError(
