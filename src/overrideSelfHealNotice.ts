@@ -1,11 +1,11 @@
 /**
- * Telling the user WHY the page reloaded itself (ASMA-7866, host half).
+ * Telling the user WHY their override stopped applying (ASMA-7866, host half).
  *
- * When an override points at a published version that has gone, the loader clears it and reloads
- * (see `EsmWidgetHost`). Without a word from the host that is an unexplained page reload followed by
- * a silently different app version — the tester keeps believing they are looking at their preview.
- * The loader leaves a one-shot record behind; this is the half that reads it and hands the host
- * something to say.
+ * When an override points at a published version that has gone, the loader clears it — at startup,
+ * before anything renders (`clearDeadOverrides`), or mid-session, followed by a reload
+ * (`EsmWidgetHost`). Without a word from the host that is a silently different app version, and the
+ * tester keeps believing they are looking at their preview. The loader leaves a record behind; this
+ * is the half that reads it and hands the host something to say.
  *
  * Deliberately split: `notifyOverrideSelfHeal` holds ALL the behaviour (take the record, name the
  * version now in effect, decide whether there is anything to say) and is unit-tested against fakes,
@@ -17,14 +17,31 @@ import { consumeOverrideSelfHeal, getAppSignal, type OverrideSelfHeal } from './
 import { takeStartupClears } from './validateOverrides.js'
 
 /**
+ * When the override was cleared: at `startup`, before the first render, so the page simply loaded
+ * without it; or mid-session, followed by a `reload`.
+ */
+export type OverrideSelfHealMoment = 'startup' | 'reload'
+
+/**
  * The sentence a host shows. It names all three things the tester needs to reconcile what they are
  * looking at with what they asked for: which app, which override is gone, and which version replaced
  * it. The replacement version is resolved at read time — by now the override has been disabled, so
- * the app's signal is the one the environment actually serves.
+ * the app's signal is the one the environment actually serves. It says "reloaded" only when the page
+ * did reload (ASMA-8735).
  */
-export function describeOverrideSelfHeal({ appName, base }: OverrideSelfHeal): string {
+export function describeOverrideSelfHeal(
+    { appName, base }: OverrideSelfHeal,
+    moment: OverrideSelfHealMoment = 'reload',
+): string {
     const version = getAppSignal(appName)?.version
-    const replacement = version ? `reloaded on version ${version}` : 'reloaded without it'
+    const replacement =
+        moment === 'startup'
+            ? version
+                ? `loaded version ${version} instead`
+                : 'loaded without it'
+            : version
+              ? `reloaded on version ${version}`
+              : 'reloaded without it'
     return `The version override for "${appName}" (${base}) no longer exists, so it was cleared and this page ${replacement}.`
 }
 
@@ -43,13 +60,13 @@ export function notifyOverrideSelfHeal(notify: (message: string, heal: OverrideS
     // The per-widget path clears mid-session and reloads, so its single record has to survive the
     // load in storage. Both end up as the same sentence.
     for (const cleared of takeStartupClears()) {
-        notify(describeOverrideSelfHeal(cleared), cleared)
+        notify(describeOverrideSelfHeal(cleared, 'startup'), cleared)
         reported = true
     }
 
     const heal = consumeOverrideSelfHeal()
     if (heal) {
-        notify(describeOverrideSelfHeal(heal), heal)
+        notify(describeOverrideSelfHeal(heal, 'reload'), heal)
         reported = true
     }
     return reported

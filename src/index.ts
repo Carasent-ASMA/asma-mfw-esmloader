@@ -66,6 +66,7 @@ export {
     describeOverrideSelfHeal,
     notifyOverrideSelfHeal,
     useOverrideSelfHealNotice,
+    type OverrideSelfHealMoment,
 } from './overrideSelfHealNotice.js'
 // The startup half (DEC-F2): a host awaits this before its first render, so a dead override never
 // gets far enough to need a reload. Returns what it cleared, for the host to surface.

@@ -4,11 +4,12 @@ import { afterEach, describe, it } from 'node:test'
 import { clearOverride, clearOverrideTransportCache, consumeOverrideSelfHeal, disableImportMapOverride, findOverrideSource, getAppSignal, getInjectedPlatform, isEsmApp, isLocalOverrideBase, peekOverrideTransport, recordOverrideSelfHeal, resolveOverrideTransport } from './platformSignal.ts'
 import { clearManifestCache } from './widgetsManifest.ts'
 
-const g = globalThis as { window?: unknown; localStorage?: unknown; fetch?: unknown }
+const g = globalThis as { window?: unknown; localStorage?: unknown; fetch?: unknown; location?: unknown }
 afterEach(() => {
     delete g.window
     delete g.localStorage
     delete g.fetch
+    delete g.location
     clearManifestCache()
     clearOverrideTransportCache()
 })
@@ -243,6 +244,26 @@ describe('override self-heal (ASMA-7866)', () => {
 
     it('does not mistake a hostname that merely contains "localhost" for the real thing', () => {
         assert.equal(isLocalOverrideBase('https://localhost.evil.example.com/'), false)
+    })
+
+    it("treats a RELATIVE base — the overrides dialog's format — as the page's own origin (ASMA-8735)", () => {
+        // `/cdn/<app>/<version>/` is a published version on whatever origin served the page, not a
+        // developer machine: on dev it must be probed like any other published base.
+        g.location = { origin: 'https://avansas.dev.adopus.no' }
+        assert.equal(isLocalOverrideBase('/cdn/asma-app-chat/pr166/'), false)
+
+        g.location = { origin: 'http://localhost:5173' }
+        assert.equal(isLocalOverrideBase('/cdn/asma-app-chat/pr166/'), true, 'a local shell serves it itself')
+    })
+
+    it('does not call a relative base local when there is no page to resolve it against', () => {
+        assert.equal(isLocalOverrideBase('/cdn/asma-app-chat/pr166/'), false)
+        assert.equal(isLocalOverrideBase('http://localhost:3003/'), true, 'an absolute base needs no page')
+
+        // An opaque origin (sandboxed iframe, file://) reads as the string "null" — no base at all.
+        g.location = { origin: 'null' }
+        assert.equal(isLocalOverrideBase('/cdn/asma-app-chat/pr166/'), false)
+        assert.equal(isLocalOverrideBase('http://localhost:3003/'), true)
     })
 
     it('records a heal and hands it over exactly once', () => {

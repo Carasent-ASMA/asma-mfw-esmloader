@@ -51,6 +51,26 @@ describe('describeOverrideSelfHeal (ASMA-7866)', () => {
         assert.match(message, /no longer exists/)
         assert.doesNotMatch(message, /version undefined/)
     })
+
+    it('does not claim a reload when the startup check cleared it before anything rendered (ASMA-8735)', () => {
+        injectPlatform({ 'asma-app-chat': { version: '0.105.4', base: '/cdn/asma-app-chat/0.105.4/' } })
+        const heal = { appName: 'asma-app-chat', base: '/cdn/asma-app-chat/pr41/' }
+
+        const startup = describeOverrideSelfHeal(heal, 'startup')
+        assert.doesNotMatch(startup, /reload/)
+        assert.match(startup, /asma-app-chat.*pr41.*no longer exists.*loaded version 0\.105\.4 instead/)
+
+        delete g.window
+        assert.doesNotMatch(describeOverrideSelfHeal(heal, 'startup'), /reload|version undefined/)
+    })
+
+    it('still says "reloaded" by default — the mid-session heal really does reload', () => {
+        injectPlatform({ 'asma-app-chat': { version: '0.105.4', base: '/cdn/asma-app-chat/0.105.4/' } })
+        assert.match(
+            describeOverrideSelfHeal({ appName: 'asma-app-chat', base: '/cdn/asma-app-chat/pr41/' }),
+            /reloaded on version 0\.105\.4/,
+        )
+    })
 })
 
 describe('notifyOverrideSelfHeal (ASMA-7866)', () => {
@@ -99,12 +119,28 @@ describe('notifyOverrideSelfHeal (ASMA-7866)', () => {
                 true,
             )
             assert.equal(shown.length, 2, 'both cleared overrides must be named, not just the last')
+            // Nothing had rendered, so nothing was reloaded — the notice must not say otherwise.
+            for (const message of shown) assert.doesNotMatch(message, /reload/)
             // ...and only once.
             assert.equal(
                 notifyOverrideSelfHeal((m) => shown.push(m)),
                 false,
             )
             assert.equal(shown.length, 2)
+        })
+    })
+
+    it('words each moment truthfully when both happened on the same load', () => {
+        g.localStorage = fakeLocalStorage({ 'import-map-override:asma-app-crm': 'https://cdn/asma-app-crm/pr9/' })
+        recordOverrideSelfHeal('asma-app-chat', 'https://cdn/asma-app-chat/pr41/')
+        return clearDeadOverrides({
+            fetchImpl: (() => Promise.resolve({ status: 404 } as Response)) as unknown as typeof fetch,
+        }).then(() => {
+            const shown: string[] = []
+            notifyOverrideSelfHeal((m) => shown.push(m))
+            assert.equal(shown.length, 2)
+            assert.doesNotMatch(shown.find((m) => m.includes('asma-app-crm'))!, /reload/)
+            assert.match(shown.find((m) => m.includes('asma-app-chat'))!, /reloaded/)
         })
     })
 

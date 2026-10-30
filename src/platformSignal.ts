@@ -272,13 +272,27 @@ const OVERRIDE_SELF_HEAL_KEY = 'asma-override-self-heal'
  * hostile. A published version that has gone (a merged `pr<N>` preview, deleted by ASMA-7863) is
  * gone for good: nothing the user can do will bring it back, and leaving the override in place
  * only guarantees the same failure on every subsequent load.
+ *
+ * A relative base is on the page's own origin, so it is local exactly when the page is (ASMA-8735).
+ * The overrides dialog writes that form, `/cdn/<app>/<version>/`; resolving it against a made-up
+ * localhost exempted every dialog-set preview from both heals.
  */
 export function isLocalOverrideBase(base: string): boolean {
+    const hostname = resolveOverrideBase(base)?.hostname
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1'
+}
+
+/**
+ * An override base as an absolute URL, a relative one resolved against the page's origin. Undefined
+ * when it cannot be resolved: malformed, or relative with no page around it.
+ */
+export function resolveOverrideBase(base: string): URL | undefined {
+    // An opaque origin (sandboxed iframe, file://) reads as "null", which is no base to resolve against.
+    const origin = typeof location === 'undefined' || location.origin === 'null' ? undefined : location.origin
     try {
-        const { hostname } = new URL(base, 'http://localhost')
-        return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1'
+        return new URL(base, origin)
     } catch {
-        return false
+        return undefined
     }
 }
 
