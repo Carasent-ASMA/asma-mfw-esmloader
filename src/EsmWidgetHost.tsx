@@ -175,9 +175,8 @@ export function EsmWidgetHost<A extends string = RegisteredAppName, P extends Wi
                 // server that isn't running" — say so, and how to fix it, instead of "Failed to fetch".
                 const signal = getAppSignal(appName)
                 // Which channel put this base in front of the app, if any. Not the `dev-override`
-                // marker: only the import-map channel produces it, while `esm-overrides` is applied by
-                // the server's head injection and leaves an entry indistinguishable from an ordinary
-                // one. A base with no source behind it is the SERVER's choice and not ours to withdraw.
+                // marker: the import-map key is the authority. A base with no source behind it is
+                // the SERVER's choice and not ours to withdraw.
                 const overrideSource = signal ? findOverrideSource(appName, signal.base) : undefined
 
                 // A dead PUBLISHED override heals itself; a dead LOCALHOST one must not.
