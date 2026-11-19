@@ -36,7 +36,6 @@ export { loadAndMountEsmWidget } from './loadEsmWidget.js'
 export { WidgetErrorNotice, type WidgetErrorNoticeProps } from './WidgetErrorNotice.js'
 export { WidgetRenderBoundary, type WidgetRenderBoundaryProps } from './WidgetRenderBoundary.js'
 export {
-    ESM_OVERRIDES_KEY,
     IMPORT_MAP_OVERRIDE_PREFIX,
     IMPORT_MAP_OVERRIDES_DISABLED_KEY,
     clearOverride,

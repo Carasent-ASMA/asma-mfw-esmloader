@@ -131,20 +131,15 @@ describe('clearDeadOverrides — the startup check (ASMA-7866 DEC-F2)', () => {
         assert.deepEqual(requested, [], 'a dev server that is down is not a deleted version')
     })
 
-    it('covers the esm-overrides channel as well, and clears it through that channel', async () => {
-        const store: Record<string, string> = {
-            'esm-overrides': JSON.stringify({ apps: { 'asma-app-chat': GONE, 'asma-app-calendar': ALIVE } }),
-        }
+    it('ignores a leftover esm-overrides entry — never probes, never clears, leaves it byte-identical', async () => {
+        const blob = JSON.stringify({ apps: { 'asma-app-chat': GONE, 'asma-app-calendar': ALIVE } })
+        const store: Record<string, string> = { 'esm-overrides': blob }
         g.localStorage = fakeLocalStorage(store)
-        const { impl } = fakeFetch({ [GONE]: 403, [ALIVE]: 200 })
+        const { impl, requested } = fakeFetch({ [GONE]: 403, [ALIVE]: 200 })
 
-        const cleared = await clearDeadOverrides({ fetchImpl: impl })
-        assert.deepEqual(
-            cleared.map((c) => [c.appName, c.source]),
-            [['asma-app-chat', 'esm-overrides']],
-        )
-        // Only the dead one goes; the other app's override is a separate, still-valid decision.
-        assert.deepEqual(JSON.parse(store['esm-overrides']!), { apps: { 'asma-app-calendar': ALIVE } })
+        assert.deepEqual(await clearDeadOverrides({ fetchImpl: impl }), [])
+        assert.deepEqual(requested, [], 'the retired channel is not an override source')
+        assert.equal(store['esm-overrides'], blob)
     })
 
     it('clears every dead override, not just the first — several previews can die together', async () => {
@@ -321,25 +316,33 @@ describe('clearDeadOverrides — the startup check (ASMA-7866 DEC-F2)', () => {
         }
     })
 
-    it("probes the OVERRIDE's own manifest, never the platform entry's — esm-overrides keeps the server's", async () => {
-        // The head injection rewrites only `base`; `widgetsManifest` still names the server's version.
+    it("probes the import-map override's own folder, never the platform entry's", async () => {
+        // The platform entry still names the resolved version; the override decides where the app
+        // actually loads from, so the probe follows the override's own folder. A leftover
+        // esm-overrides entry for the same app changes neither the probe nor its own bytes.
         g.window = {
             __ASMA_PLATFORM__: {
                 apps: {
                     'asma-app-chat': {
                         version: '0.105.4',
-                        base: ESM_ONLY,
+                        base: `${DEV}/cdn/asma-app-chat/0.105.4/`,
                         esm: true,
                         widgetsManifest: `${DEV}/cdn/asma-app-chat/0.105.4/widgets.json`,
                     },
                 },
             },
         }
-        g.localStorage = fakeLocalStorage({ 'esm-overrides': JSON.stringify({ apps: { 'asma-app-chat': ESM_ONLY } }) })
+        const blob = JSON.stringify({ apps: { 'asma-app-chat': DELETED } })
+        const store: Record<string, string> = {
+            'import-map-override:asma-app-chat': ESM_ONLY,
+            'esm-overrides': blob,
+        }
+        g.localStorage = fakeLocalStorage(store)
         const { impl, urls } = fetchByUrl({ [ESM_ONLY]: 403, [`${ESM_ONLY}widgets.json`]: 200 })
 
         assert.deepEqual(await clearDeadOverrides({ fetchImpl: impl }), [])
         assert.deepEqual(urls(), [ESM_ONLY, `${ESM_ONLY}widgets.json`])
+        assert.equal(store['esm-overrides'], blob)
     })
 
     it('asks the origin rather than the HTTP cache, with a GET', async () => {

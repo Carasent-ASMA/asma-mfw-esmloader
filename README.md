@@ -365,7 +365,7 @@ In our setup no client code builds the payload: the static server generates it *
 
 1. **Per-user version resolution** — the user's app versions come from the revman rows (most-specific-wins, null = wildcard), producing `apps[service] = { version, base: '/cdn/<service>/<version>/' }` plus the legacy-parity `default_app_versions` map.
 2. **`esm` marking, derived from the artifact** — for each resolved app@version the server `HEAD`s `s3://…/<service>/<version>/widgets.json` (cached per app@version, 24 h — artifacts are immutable). Present ⇒ `markEsmApps` sets `esm: true` + `widgetsManifest: '<base>widgets.json'`. **No DB field, no global flag, no client probe** — capability travels with the artifact, and multiversion containment is the kill-switch (only users resolved to an ESM-capable version get the ESM path).
-3. **The injection itself** — ONE inline **classic** script, **first in `<head>`**, so it runs synchronously before any module script: it merges `esm-overrides` localStorage base-overrides into the payload, *then* assigns `window.__ASMA_PLATFORM__`, *then* (optionally) materializes a `<script type="importmap">`. Order is load-bearing: an import map cannot change once module resolution has used it, so overrides must win **before** it exists. The JSON is escaped for inline embedding (`</script>` breakout, U+2028/9).
+3. **The injection itself** — ONE inline **classic** script, **first in `<head>`**, so it runs synchronously before any module script: it assigns `window.__ASMA_PLATFORM__`, *then* (optionally) materializes a `<script type="importmap">`. Order is load-bearing: an import map cannot change once module resolution has used it, so the payload must be final **before** it exists. The JSON is escaped for inline embedding (`</script>` breakout, U+2028/9). No client value rewrites the payload: `esm-overrides` was retired in ASMA-8742, a leftover key is ignored, and `localStorage.removeItem('esm-overrides')` clears it.
 
 What lands in the page:
 
@@ -385,7 +385,6 @@ What lands in the page:
                     'asma-app-chat': { version: '2.0.1', base: '/cdn/asma-app-chat/2.0.1/' }, // no esm ⇒ qiankun
                 },
             }
-            /* merge localStorage 'esm-overrides' into p.apps[*].base … */
             window.__ASMA_PLATFORM__ = p
         })()
     </script>

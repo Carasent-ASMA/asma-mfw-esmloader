@@ -92,31 +92,14 @@ export function disableImportMapOverride(appName: string): void {
 }
 
 /**
- * The SECOND override channel: `esm-overrides` (ASMA-7866). The server's own head injection reads this
- * key and rewrites `apps[<name>].base` IN PLACE before the import map is materialized — see
- * `asma-njs-auth/src/handlers/buildPlatformInjection.ts`. Nothing in the loader applies it, so an app
- * overridden this way looks exactly like an ordinary platform entry: real `version`, someone else's
- * `base`. That is precisely why it needs naming — a self-heal keyed on the `dev-override` marker would
- * skip it, and a self-heal keyed on nothing at all would start clearing bases the SERVER chose, which
- * is a dangling version pointer (ASMA-7864) that no client action can fix.
+ * The override channel: `import-map-override:<app>` from the single-spa overrides widget. The
+ * `esm-overrides` key the server's head injection once read was retired in ASMA-8742; a leftover
+ * entry is ignored, so the app looks like an ordinary platform entry and is not a source a
+ * self-heal may clear.
  *
- * Shape: `{"apps":{"asma-app-chat":"https://…/pr41/"}}`. Undefined if unset, malformed or blocked.
+ * @see _docs/frontend/architecture/2026-06-03-11-07-architecture-multiversion-app-loading.md
  */
-export const ESM_OVERRIDES_KEY = 'esm-overrides'
-
-function readEsmOverrides(): Record<string, string> {
-    if (typeof localStorage === 'undefined') return {}
-    try {
-        const parsed: unknown = JSON.parse(localStorage.getItem(ESM_OVERRIDES_KEY) ?? '{}')
-        const apps = (parsed as { apps?: unknown } | null)?.apps
-        return apps && typeof apps === 'object' ? (apps as Record<string, string>) : {}
-    } catch {
-        return {}
-    }
-}
-
-/** Where a base in front of an app came from — `undefined` means the server payload's own. */
-export type OverrideSource = 'import-map' | 'esm-overrides'
+export type OverrideSource = 'import-map'
 
 /**
  * Which override, if any, put `base` in front of `appName`.
@@ -124,15 +107,14 @@ export type OverrideSource = 'import-map' | 'esm-overrides'
  * The question a self-heal must answer before clearing anything: an override is the user's own
  * setting and can be withdrawn, whereas a base the server chose is not theirs to withdraw — clearing
  * it would achieve nothing and the reload would loop. Matched on the base itself rather than on the
- * `dev-override` marker, because only one of the two channels produces that marker.
+ * `dev-override` marker, because the base is what actually decides where the app loads from.
  */
 export function findOverrideSource(appName: string, base: string): OverrideSource | undefined {
     if (getImportMapOverrideBase(appName) === base) return 'import-map'
-    if (readEsmOverrides()[appName] === base) return 'esm-overrides'
     return undefined
 }
 
-/** One override currently in force, whichever channel put it there. */
+/** One override currently in force. */
 export interface ActiveOverride {
     appName: string
     base: string
@@ -140,7 +122,7 @@ export interface ActiveOverride {
 }
 
 /**
- * Every override in force right now, across both channels.
+ * Every override in force right now.
  *
  * Needed because the startup check (DEC-F2) has to ask "what is overridden?" without knowing the
  * app names in advance — unlike the per-widget path, which always starts from an app it is about
@@ -160,16 +142,7 @@ export function listActiveOverrides(): ActiveOverride[] {
             if (base) overrides.push({ appName, base, source: 'import-map' })
         }
     } catch {
-        // storage blocked or non-enumerable — fall through to the other channel
-    }
-
-    const seen = new Set(overrides.map((override) => override.appName))
-    for (const [appName, base] of Object.entries(readEsmOverrides())) {
-        // The import-map channel wins in `getAppSignal`, so it wins here too — otherwise the same
-        // app would be probed twice and cleared through the wrong channel.
-        if (typeof base === 'string' && base && !seen.has(appName)) {
-            overrides.push({ appName, base, source: 'esm-overrides' })
-        }
+        // storage blocked or non-enumerable — nothing can be judged, so nothing is listed
     }
     return overrides
 }
@@ -178,16 +151,6 @@ export function listActiveOverrides(): ActiveOverride[] {
 export function clearOverride(appName: string, source: OverrideSource): void {
     if (source === 'import-map') {
         disableImportMapOverride(appName)
-        return
-    }
-    if (typeof localStorage === 'undefined') return
-    try {
-        const apps = readEsmOverrides()
-        // Only this app's entry goes — the others are separate, still-valid decisions by the same user.
-        const { [appName]: _removed, ...rest } = apps
-        localStorage.setItem(ESM_OVERRIDES_KEY, JSON.stringify({ apps: rest }))
-    } catch {
-        // storage blocked — best-effort, nothing more to do
     }
 }
 
